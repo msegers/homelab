@@ -1,0 +1,53 @@
+# See details about values in ../../../../../mathijs.se/mathijs_se/
+replicaCount: 1
+image:
+  repository: msegers/mathijs-se
+  pullPolicy: Always
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: false
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+
+securityContext: {}
+
+service:
+  type: NodePort
+  #type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+
+resources: {}
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+
+volumes: []
+
+volumeMounts: []
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

@@ -1,0 +1,18 @@
+flags:
+  rewrite: false
+
+service:
+  name: mathijs-se
+  port:
+    number: 80
+
+annotations:
+  hajimari.io/enable: "true"
+  hajimari.io/appName: "mathijs.se"
+
+ingress:
+  routePath: /
+
+hosts:
+  - name: mathijs.se
+  - name: www.mathijs.se
