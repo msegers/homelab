@@ -1,4 +1,4 @@
-# Terra Form PI
+# Terraform PI
 
 This is a terraform config for deploying a k3s cluster with some apps to my raspberry at home.
 Feel free to take inspiration, call me out for stupid decisions etc.
