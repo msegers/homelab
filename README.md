@@ -3,6 +3,8 @@
 This is a terraform config for deploying a k3s cluster with some apps to my raspberry at home.
 Feel free to take inspiration, call me out for stupid decisions etc.
 
+I want to be very clear that I copied a lot from [Saura Sahu's homelab project](https://github.com/mrsauravsahu/kube-homelab).
+
 ## How to use
 
 Right now in this project I hard coded my local Raspberry IP,
