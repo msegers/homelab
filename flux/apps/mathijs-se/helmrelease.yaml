@@ -27,7 +27,7 @@ spec:
 
     image:
       repository: ghcr.io/msegers/mathijs.se
-      tag: sha-5d1a89c17a356348f888519d1b800cccc51c6b3b
+      tag: 0.0.2 # # {"$imagepolicy": "flux-system:mathijs-se:tag"}
       pullPolicy: IfNotPresent
 
     service:
