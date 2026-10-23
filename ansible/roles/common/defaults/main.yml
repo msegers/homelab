@@ -1,0 +1,9 @@
+---
+common_packages:
+  - curl
+  - ca-certificates
+  - iptables
+  - conntrack
+  - socat
+
+common_cmdline_path: /boot/firmware/cmdline.txt

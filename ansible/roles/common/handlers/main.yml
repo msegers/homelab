@@ -1,0 +1,5 @@
+---
+- name: Reboot to apply kernel command line
+  ansible.builtin.reboot:
+    msg: Rebooting to apply cgroup kernel arguments
+    reboot_timeout: 600

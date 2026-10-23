@@ -1,0 +1,53 @@
+---
+- name: Download k3s install script
+  ansible.builtin.get_url:
+    url: "{{ k3s_install_url }}"
+    dest: "{{ k3s_install_script }}"
+    mode: "0755"
+    force: false
+
+# There is no native k3s Ansible module. The official script is used with an
+# explicit version and a creates guard so this playbook never upgrades an
+# existing installation. --docker is deliberately omitted: k3s uses containerd.
+- name: Install k3s
+  ansible.builtin.command:
+    cmd: "{{ k3s_install_script }}"
+  args:
+    creates: /etc/systemd/system/k3s.service
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    INSTALL_K3S_EXEC: >-
+      server
+      --disable={{ k3s_disable | join(' --disable=') }}
+      --write-kubeconfig-mode={{ k3s_kubeconfig_mode }}
+      --tls-san={{ k3s_tls_sans | join(' --tls-san=') }}
+      --bind-address={{ k3s_node_ip }}
+      --advertise-address={{ k3s_node_ip }}
+      --node-ip={{ k3s_node_ip }}
+
+- name: Ensure k3s is enabled and running
+  ansible.builtin.systemd:
+    name: "{{ k3s_service_name }}"
+    enabled: true
+    state: started
+
+- name: Point kubeconfig at the node IP
+  ansible.builtin.replace:
+    path: "{{ k3s_kubeconfig_path }}"
+    regexp: 'https://127\.0\.0\.1:6443'
+    replace: 'https://{{ k3s_node_ip }}:6443'
+
+- name: Wait for k3s node to become ready
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - get
+      - nodes
+      - -o
+      - 'jsonpath={.items[0].status.conditions[?(@.type=="Ready")].status}'
+  register: k3s_node_ready
+  until: (k3s_node_ready.stdout | trim) == "True"
+  retries: 60
+  delay: 5
+  changed_when: false

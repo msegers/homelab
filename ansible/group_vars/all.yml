@@ -1,0 +1,20 @@
+---
+# Keep this as "segers" if the existing Pi-hole node affinity should keep
+# matching the cluster node.
+pi_hostname: segers
+
+# This must be the Pi's LAN IP, not a DNS name. k3s uses it for bind-address,
+# advertise-address and node-ip.
+k3s_node_ip: "{{ ansible_host }}"
+
+# The legacy Terraform install command used this version. The older version in
+# k3s/locals.tf was unused.
+k3s_version: "v1.33.0+k3s1"
+
+# Add DNS names here if the API should also be reachable by name.
+# Example: ["mathijs.se", "www.mathijs.se"]
+k3s_extra_tls_sans: []
+
+# This preserves the previous behaviour. Set "0600" if you do not need other
+# local users to read the kubeconfig.
+k3s_kubeconfig_mode: "0644"

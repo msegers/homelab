@@ -1,4 +1,13 @@
-# Terraform PI
+# Homelab
+
+The current provisioning path is Ansible. See
+[`ansible/README.md`](ansible/README.md) for installing Ansible, configuring an
+inventory, provisioning a fresh Raspberry Pi, verifying k3s, and restoring Flux.
+
+The Terraform under `k3s/` and `apps/` is retained as legacy reference and is
+not used by the Ansible playbook.
+
+## Legacy Terraform
 
 This is a terraform config for deploying a k3s cluster with some apps to my raspberry at home.
 Feel free to take inspiration, call me out for stupid decisions etc.
@@ -31,7 +40,7 @@ Now at the current state, the next step is awkward, as you'd need to have my blo
 currently it references to some files in the repo. 
 So you might want to comment out the `mathijs.se` related sections in `apps/apps.tf`
 To then run this terraform conf, you need to do one thing, you need kubectl access to k3s on pi.
-For that you can copy (from the pi) `/etc/rancher/k3s/k3s.config` to your host machines `~/.kube/config`.
+For that you can copy (from the pi) `/etc/rancher/k3s/k3s.yaml` to your host machines `~/.kube/config`.
 Perhaps there's better locations, leave an issue!
 
 Now similar to k3s, you can simply run `terraform init` and `terraform apply` in `apps`, currently there's not much there,

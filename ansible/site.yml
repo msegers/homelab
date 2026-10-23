@@ -1,0 +1,16 @@
+---
+- name: Provision Raspberry Pi for k3s
+  hosts: pi
+  become: true
+  gather_facts: true
+
+  roles:
+    - common
+
+  tasks:
+    - name: Apply boot changes before installing k3s
+      ansible.builtin.meta: flush_handlers
+
+    - name: Configure k3s
+      ansible.builtin.import_role:
+        name: k3s

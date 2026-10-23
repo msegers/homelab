@@ -1,0 +1,35 @@
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+
+- name: Set hostname
+  ansible.builtin.hostname:
+    name: "{{ pi_hostname }}"
+
+- name: Ensure hostname resolves locally
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s+'
+    line: "127.0.1.1 {{ pi_hostname }}"
+    state: present
+
+- name: Enable memory cgroup controller
+  ansible.builtin.replace:
+    path: "{{ common_cmdline_path }}"
+    regexp: '\A(?![^\n]*\bcgroup_memory=1\b)([^\n]*)'
+    replace: '\1 cgroup_memory=1'
+  notify: Reboot to apply kernel command line
+
+- name: Enable memory cgroup accounting
+  ansible.builtin.replace:
+    path: "{{ common_cmdline_path }}"
+    regexp: '\A(?![^\n]*\bcgroup_enable=memory\b)([^\n]*)'
+    replace: '\1 cgroup_enable=memory'
+  notify: Reboot to apply kernel command line

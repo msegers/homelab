@@ -1,0 +1,11 @@
+---
+k3s_install_url: https://get.k3s.io
+k3s_install_script: /usr/local/bin/k3s-install.sh
+k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml
+k3s_service_name: k3s
+
+# Traefik is disabled because ingress-nginx handles ingress in this cluster.
+k3s_disable:
+  - traefik
+
+k3s_tls_sans: "{{ [k3s_node_ip] + k3s_extra_tls_sans }}"
