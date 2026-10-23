@@ -1,0 +1,25 @@
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageUpdateAutomation
+metadata:
+  name: mathijs-se
+  namespace: flux-system
+spec:
+  interval: 5m
+  sourceRef:
+    kind: GitRepository
+    name: terraform-pi
+  git:
+    checkout:
+      ref:
+        branch: main
+    commit:
+      author:
+        name: fluxbot
+        email: fluxbot@users.noreply.github.com
+      messageTemplate: "chore: update website image"
+    push:
+      branch: main
+  update:
+    strategy: Setters
+    path: ./flux/apps/mathijs-se
+
