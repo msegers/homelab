@@ -1,0 +1,42 @@
+
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: mathijs-se
+  namespace: flux-system
+spec:
+  suspend: true
+  interval: 5m
+
+  releaseName: mathijs-se
+  targetNamespace: homelab
+  storageNamespace: homelab
+
+  chart:
+    spec:
+      chart: ./helm
+      version: "*"
+      sourceRef:
+        kind: GitRepository
+        name: mathijs-se
+        namespace: flux-system
+      interval: 5m
+
+  values:
+    replicaCount: 1
+
+    image:
+      repository: ghcr.io/msegers/mathijs.se
+      tag: sha-5d1a89c17a356348f888519d1b800cccc51c6b3b
+      pullPolicy: IfNotPresent
+
+    service:
+      type: NodePort
+      port: 80
+
+    serviceAccount:
+      create: false
+
+    ingress:
+      enabled: false
+
