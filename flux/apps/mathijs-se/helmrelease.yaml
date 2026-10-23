@@ -22,7 +22,7 @@ spec:
     replicaCount: 1
     image:
       repository: ghcr.io/msegers/mathijs.se
-      tag: 0.0.3 # {"$imagepolicy": "flux-system:mathijs-se:tag"}
+      tag: 0.0.4 # {"$imagepolicy": "flux-system:mathijs-se:tag"}
       pullPolicy: IfNotPresent
     service:
       type: NodePort
