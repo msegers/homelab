@@ -1,4 +1,3 @@
-
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -7,11 +6,9 @@ metadata:
 spec:
   suspend: false
   interval: 5m
-
   releaseName: mathijs-se
   targetNamespace: homelab
   storageNamespace: homelab
-
   chart:
     spec:
       chart: ./helm
@@ -21,22 +18,16 @@ spec:
         name: mathijs-se
         namespace: flux-system
       interval: 5m
-
   values:
     replicaCount: 1
-
     image:
       repository: ghcr.io/msegers/mathijs.se
-      tag: 0.0.2 # {"$imagepolicy": "flux-system:mathijs-se:tag"}
+      tag: 0.0.3 # {"$imagepolicy": "flux-system:mathijs-se:tag"}
       pullPolicy: IfNotPresent
-
     service:
       type: NodePort
       port: 80
-
     serviceAccount:
       create: false
-
     ingress:
       enabled: false
-
