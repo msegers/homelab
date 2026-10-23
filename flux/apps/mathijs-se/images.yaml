@@ -1,0 +1,22 @@
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: mathijs-se
+  namespace: flux-system
+spec:
+  image: ghcr.io/msegers/mathijs.se
+  interval: 1m
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImagePolicy
+metadata:
+  name: mathijs-se
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: mathijs-se
+  filterTags:
+    pattern: '^0\.0\.[0-9]+$'
+  policy:
+    semver:
+      range: '>=0.0.0 <0.1.0'
