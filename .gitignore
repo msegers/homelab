@@ -11,6 +11,3 @@ ansible/host_vars/*.yml
 ansible/host_vars/*.yaml
 .ansible/
 *.retry
-
-# Ignore any leftover local files from the earlier Compose configuration.
-compose/.env
