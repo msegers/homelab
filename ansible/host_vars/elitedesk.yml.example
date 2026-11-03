@@ -4,7 +4,7 @@
 compose_pihole_password: ""
 
 # Optional per-host overrides (see roles/compose/defaults/main.yml):
-# homelab_hostname: elitedesk
+# homelab_hostname: homelab
 # compose_timezone: Europe/Stockholm
 # compose_website_image: ghcr.io/msegers/mathijs.se:0.0.5
 # compose_pihole_domain: dns.home.example

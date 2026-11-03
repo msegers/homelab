@@ -30,7 +30,7 @@ Trust the new host's SSH key by connecting manually first.
 To target a different machine, change `ansible_host` in this file. To manage
 multiple hosts, add inventory entries and select one with `--limit elitedesk`.
 Set `homelab_hostname` per host if using multiple hosts; its default is
-`elitedesk` in `group_vars/all.yml`.
+`homelab` in `group_vars/all.yml`.
 
 ## Configure applications
 
