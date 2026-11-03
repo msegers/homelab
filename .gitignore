@@ -7,7 +7,5 @@ terraform.tfstate.backup
 
 # Ansible
 ansible/inventory.ini
-ansible/host_vars/*.yml
-ansible/host_vars/*.yaml
 .ansible/
 *.retry

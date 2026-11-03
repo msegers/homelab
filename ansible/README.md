@@ -34,21 +34,50 @@ Set `homelab_hostname` per host if using multiple hosts; its default is
 
 ## Configure applications
 
-```bash
-cp host_vars/elitedesk.yml.example host_vars/elitedesk.yml
-chmod 600 host_vars/elitedesk.yml
-$EDITOR host_vars/elitedesk.yml
-ansible-vault encrypt host_vars/elitedesk.yml
+Host variables are split by purpose:
+
+```text
+host_vars/elitedesk/
+├── main.yml    # Ordinary settings and references to Vault variables
+└── vault.yml   # Encrypted secrets; create locally, then commit encrypted
 ```
 
-Set `compose_pihole_password` to a strong password before encrypting the file.
-Ansible loads `host_vars/elitedesk.yml` automatically for the inventory alias
-`elitedesk`. For another inventory alias, name the file to match it. These local
-YAML files are gitignored; the example is safe to commit. Later edits use
-`ansible-vault edit host_vars/elitedesk.yml`. Keep the Vault password out of Git.
+`main.yml` is already committed. Create the secrets file using your own Vault
+password (store that password in your password manager, never in Git):
+
+```bash
+ansible-vault create host_vars/elitedesk/vault.yml
+```
+
+In the editor, enter this YAML with a strong, unique Pi-hole password:
+
+```yaml
+vault_compose_pihole_password: 'YOUR_PIHOLE_PASSWORD'
+```
+
+Save and exit. Vault encrypts the file on disk; the Vault password and Pi-hole
+password are separate secrets. Confirm the file's first line starts with
+`$ANSIBLE_VAULT;` before adding it to Git:
+
+```bash
+head -n 1 host_vars/elitedesk/vault.yml
+git add host_vars/elitedesk/vault.yml
+git commit -m "chore: add encrypted EliteDesk secrets"
+```
+
+Both files are intended to be committed. Never commit plaintext secrets or a
+Vault password file. Edit secrets with
+`ansible-vault edit host_vars/elitedesk/vault.yml`, not by decrypting the file
+in place. The encrypted file is not supplied by this repository until you create
+it with your own secrets and password.
+
+Ansible loads both YAML files automatically for inventory alias `elitedesk`.
+For another alias, name the directory to match it. If migrating an existing
+`host_vars/elitedesk.yml`, move its settings/secrets into this directory layout
+and remove the old file; don't keep both forms for the same host.
 
 Non-secret defaults (images, timezone, domains, upstream DNS) are in
-`roles/compose/defaults/main.yml`. Override them in `host_vars` for one machine,
+`roles/compose/defaults/main.yml`. Override them in `host_vars/elitedesk/main.yml` for one machine,
 or `group_vars/all.yml` for all machines. The bind IP comes from `ansible_host`,
 and the default Pi-hole domain follows it automatically.
 
@@ -74,7 +103,8 @@ ansible-playbook site.yml --ask-vault-pass
 Add `--ask-become-pass` if sudo requires a password. No command is run against
 the old Pi unless you explicitly put it in the inventory.
 
-If you choose not to encrypt your local host variables, omit `--ask-vault-pass`.
+The application role requires the Vault secret before it can deploy. A syntax
+check alone can run without `--ask-vault-pass` before `vault.yml` is created.
 
 Check mode is only a preview: on a fresh host, tasks depending on a newly
 created apt key/repository or installed packages may fail because check mode

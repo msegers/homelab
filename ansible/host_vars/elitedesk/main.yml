@@ -1,0 +1,4 @@
+---
+# Non-secret host settings are committed normally. Keep the actual password in
+# vault.yml, created with ansible-vault (see ansible/README.md).
+compose_pihole_password: "{{ vault_compose_pihole_password }}"
