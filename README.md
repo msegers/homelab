@@ -7,7 +7,7 @@ Application settings use Ansible role defaults and per-host `host_vars` YAML.
 Use Ansible Vault to encrypt secrets; no `.env` file is needed.
 
 The [Compose stack](docs/compose.md) runs Pi-hole, mathijs.se, and Caddy
-for HTTP hostname routing.
+for hostname routing and automatic website HTTPS.
 
 The Terraform under `k3s/` and `apps/`, the old Ansible k3s role, and `flux/`
 are retained as legacy reference. They are not used by the current playbook.

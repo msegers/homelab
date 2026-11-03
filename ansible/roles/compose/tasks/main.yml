@@ -1,4 +1,11 @@
 ---
+- name: Require an explicit service bind address assigned to this host
+  ansible.builtin.assert:
+    that:
+      - compose_bind_ip is defined
+      - compose_bind_ip in ansible_all_ipv4_addresses
+    fail_msg: Set compose_bind_ip to a LAN IPv4 address assigned to the target; ansible_host is only for SSH.
+
 - name: Require Pi-hole password
   ansible.builtin.assert:
     that:

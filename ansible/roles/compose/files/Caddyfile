@@ -1,8 +1,4 @@
-{
-	auto_https off
-}
-
-http://{$WEBSITE_DOMAIN}, http://{$WEBSITE_WWW_DOMAIN} {
+{$WEBSITE_DOMAIN}, {$WEBSITE_WWW_DOMAIN} {
 	reverse_proxy website:80
 }
 

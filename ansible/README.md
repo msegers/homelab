@@ -78,8 +78,19 @@ and remove the old file; don't keep both forms for the same host.
 
 Non-secret defaults (images, timezone, domains, upstream DNS) are in
 `roles/compose/defaults/main.yml`. Override them in `host_vars/elitedesk/main.yml` for one machine,
-or `group_vars/all.yml` for all machines. The bind IP comes from `ansible_host`,
-and the default Pi-hole domain follows it automatically.
+or `group_vars/all.yml` for all machines.
+
+The two addresses have different purposes:
+
+| Variable | Purpose |
+| --- | --- |
+| `ansible_host` (inventory) | SSH endpoint; may be a DNS name, VPN address, or management IP. |
+| `compose_bind_ip` (`host_vars/elitedesk/main.yml`) | LAN IPv4 address assigned to the target, used for published HTTP/HTTPS and DNS ports. |
+
+They may both be `192.168.68.111`, but are configured independently. Changing
+the SSH endpoint does not change service exposure. The role verifies that
+`compose_bind_ip` is assigned to the target; the default Pi-hole domain follows
+this bind IP.
 
 There is no `.env` file to maintain. Ansible renders the Compose YAML, including
 the password, with root-only permissions and suppresses its contents in task
@@ -114,13 +125,20 @@ does not create them. Compose startup is skipped entirely in check mode.
 
 ```bash
 ssh YOUR_SSH_USER@192.168.68.111 'sudo docker compose --project-directory /opt/homelab ps'
-curl --resolve mathijs.se:80:192.168.68.111 http://mathijs.se/
+curl -I --resolve mathijs.se:80:192.168.68.111 http://mathijs.se/
+curl --resolve mathijs.se:443:192.168.68.111 https://mathijs.se/
+curl --resolve www.mathijs.se:443:192.168.68.111 https://www.mathijs.se/
 curl -I http://dns.192.168.68.111.nip.io/admin/
 dig @192.168.68.111 example.com
 ```
 
+The website's HTTP request should redirect to HTTPS. HTTPS checks require Caddy
+to have obtained publicly trusted certificates first; see the [HTTPS cutover
+requirements](../docs/compose.md#https-and-public-cutover). Do not bypass
+certificate verification with `curl -k` when accepting the migration.
+
 The stack's startup wait checks container running/health status where available;
-it does not replace the application and DNS checks above.
+it does not verify certificate issuance or replace the checks above.
 
 ## Existing hosts and safety
 
@@ -130,7 +148,7 @@ it does not replace the application and DNS checks above.
   k3s uninstaller or deletes Kubernetes data.
 - There are no automatic reboots, router changes, firewall changes, or user
   additions to the root-equivalent `docker` group.
-- Reserve the EliteDesk IP in your router. Check ports TCP 80 and TCP/UDP 53
+- Reserve the EliteDesk IP in your router. Check ports TCP 80/443 and TCP/UDP 53
   are free before deploying (`sudo ss -lntup`). A DNS service bound on all host
   interfaces can conflict with Pi-hole; resolve that deliberately, not by
   blindly disabling the host resolver.
