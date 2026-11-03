@@ -1,0 +1,15 @@
+{
+	auto_https off
+}
+
+http://{$WEBSITE_DOMAIN}, http://{$WEBSITE_WWW_DOMAIN} {
+	reverse_proxy website:80
+}
+
+http://{$PIHOLE_DOMAIN} {
+	@lan remote_ip private_ranges
+	handle @lan {
+		reverse_proxy pihole:80
+	}
+	respond "LAN access only" 403
+}

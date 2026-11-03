@@ -1,0 +1,42 @@
+name: homelab
+
+services:
+  proxy:
+    image: {{ compose_caddy_image | to_json | replace('$', '$$') }}
+    restart: unless-stopped
+    ports:
+      - {{ (compose_host_ip ~ ':80:80') | to_json | replace('$', '$$') }}
+    environment:
+      WEBSITE_DOMAIN: {{ compose_website_domain | to_json | replace('$', '$$') }}
+      WEBSITE_WWW_DOMAIN: {{ compose_website_www_domain | to_json | replace('$', '$$') }}
+      PIHOLE_DOMAIN: {{ compose_pihole_domain | to_json | replace('$', '$$') }}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - website
+      - pihole
+
+  website:
+    image: {{ compose_website_image | to_json | replace('$', '$$') }}
+    restart: unless-stopped
+
+  pihole:
+    image: {{ compose_pihole_image | to_json | replace('$', '$$') }}
+    restart: unless-stopped
+    ports:
+      - {{ (compose_host_ip ~ ':53:53/tcp') | to_json | replace('$', '$$') }}
+      - {{ (compose_host_ip ~ ':53:53/udp') | to_json | replace('$', '$$') }}
+    environment:
+      TZ: {{ compose_timezone | to_json | replace('$', '$$') }}
+      FTLCONF_webserver_api_password: {{ compose_pihole_password | to_json | replace('$', '$$') }}
+      FTLCONF_dns_listeningMode: ALL
+      FTLCONF_dns_upstreams: {{ compose_pihole_upstreams | to_json | replace('$', '$$') }}
+    volumes:
+      - pihole_data:/etc/pihole
+
+volumes:
+  pihole_data:
+  caddy_data:
+  caddy_config:
