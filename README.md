@@ -1,11 +1,16 @@
 # Homelab
 
-The current provisioning path is Ansible. See
-[`ansible/README.md`](ansible/README.md) for installing Ansible, configuring an
-inventory, provisioning a fresh Raspberry Pi, verifying k3s, and restoring Flux.
+The current provisioning path is **Ansible + Docker Compose on Debian**.
+See [`ansible/README.md`](ansible/README.md) to target the EliteDesk (example
+`192.168.68.111`) using a gitignored inventory and provision Docker.
+Application settings use Ansible role defaults and per-host `host_vars` YAML.
+Use Ansible Vault to encrypt secrets; no `.env` file is needed.
 
-The Terraform under `k3s/` and `apps/` is retained as legacy reference and is
-not used by the Ansible playbook.
+The [Compose stack](docs/compose.md) runs Pi-hole, mathijs.se, and Caddy
+for hostname routing and automatic website HTTPS.
+
+The Terraform under `k3s/` and `apps/`, the old Ansible k3s role, and `flux/`
+are retained as legacy reference. They are not used by the current playbook.
 
 ## Legacy Terraform
 
@@ -15,6 +20,9 @@ Feel free to take inspiration, call me out for stupid decisions etc.
 I want to be very clear that I copied a lot from [Saura Sahu's homelab project](https://github.com/mrsauravsahu/kube-homelab).
 
 ## How to use
+
+> The instructions below describe the legacy Terraform/k3s setup, not the
+> current Ansible/Compose workflow linked above.
 
 Right now in this project I hard coded my local Raspberry IP,
 you can update this in `k3s/terraform.tfvars` it would probably be better to have this in some non versioned config,
@@ -46,4 +54,3 @@ Perhaps there's better locations, leave an issue!
 Now similar to k3s, you can simply run `terraform init` and `terraform apply` in `apps`, currently there's not much there,
 if you disabled my blog (you better), there should just be `pihole` there. 
 So unless you just want to copy my things and build on top of it, there are likely better ways to handle this.
-

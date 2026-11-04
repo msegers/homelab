@@ -1,0 +1,10 @@
+---
+- name: Restart proxy
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_project_dir }}"
+    project_name: homelab
+    services:
+      - proxy
+    state: restarted
+  when: not ansible_check_mode
+  no_log: true

@@ -1,4 +1,21 @@
 ---
+- name: Require Debian
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == 'Debian'
+    fail_msg: This playbook currently supports Debian hosts only.
+
+- name: Check for an existing k3s installation
+  ansible.builtin.stat:
+    path: /etc/systemd/system/k3s.service
+  register: common_k3s_service
+
+- name: Refuse to mix the new stack with an existing k3s server
+  ansible.builtin.assert:
+    that:
+      - not common_k3s_service.stat.exists
+    fail_msg: Back up and manually uninstall k3s before provisioning this host.
+
 - name: Update apt cache
   ansible.builtin.apt:
     update_cache: true
@@ -11,25 +28,11 @@
 
 - name: Set hostname
   ansible.builtin.hostname:
-    name: "{{ pi_hostname }}"
+    name: "{{ homelab_hostname }}"
 
 - name: Ensure hostname resolves locally
   ansible.builtin.lineinfile:
     path: /etc/hosts
     regexp: '^127\.0\.1\.1\s+'
-    line: "127.0.1.1 {{ pi_hostname }}"
+    line: "127.0.1.1 {{ homelab_hostname }}"
     state: present
-
-- name: Enable memory cgroup controller
-  ansible.builtin.replace:
-    path: "{{ common_cmdline_path }}"
-    regexp: '\A(?![^\n]*\bcgroup_memory=1\b)([^\n]*)'
-    replace: '\1 cgroup_memory=1'
-  notify: Reboot to apply kernel command line
-
-- name: Enable memory cgroup accounting
-  ansible.builtin.replace:
-    path: "{{ common_cmdline_path }}"
-    regexp: '\A(?![^\n]*\bcgroup_enable=memory\b)([^\n]*)'
-    replace: '\1 cgroup_enable=memory'
-  notify: Reboot to apply kernel command line

@@ -1,247 +1,155 @@
-# Ansible provisioning
+# Debian + Docker Compose provisioning
 
-This directory provisions a fresh Raspberry Pi OS Lite (64-bit) host for the
-existing single-node k3s cluster. It deliberately covers only the machine and
-k3s bootstrap. Application state, secrets, Flux, and persistent data are
-restored separately.
+The playbook targets the `homelab` inventory group. It configures a Debian
+host's hostname, installs Docker Engine and the Compose v2 plugin from Docker's
+official repository, and renders the Compose role's template to `/opt/homelab`.
 
-The Terraform under `../k3s` and `../apps` is retained as legacy reference and
-is not used by this playbook.
+It no longer installs k3s, changes Raspberry Pi boot settings, or installs Flux.
+The old k3s role, Terraform, and Flux files remain as reference only.
 
-> This playbook is intended for a fresh host. The k3s install is guarded by the
-> presence of `/etc/systemd/system/k3s.service`; if k3s is already installed,
-> the playbook will not replace Docker with containerd or change existing k3s
-> flags.
+## Configure the target
 
-## What the playbook does
-
-- Installs the small set of base packages needed by k3s.
-- Sets the hostname and a matching `/etc/hosts` entry.
-- Adds `cgroup_memory=1 cgroup_enable=memory` to the Raspberry Pi kernel command
-  line, and reboots once if that changed.
-- Installs a pinned k3s version using the official install script. There is no
-  native k3s Ansible module, so the script is guarded with `creates` and never
-  upgrades an existing installation.
-- Uses k3s's default containerd runtime. Docker is not installed and `--docker`
-  is not passed.
-- Preserves the original cluster networking flags: `--disable=traefik`,
-  `--write-kubeconfig-mode`, `--tls-san`, `--bind-address`,
-  `--advertise-address`, and `--node-ip`.
-- Rewrites the kubeconfig server from `127.0.0.1` to the node IP, as the old
-  Terraform did.
-- Enables and starts `k3s`, then waits for the node to report `Ready`.
-
-## What remains manual
-
-- Flashing the Raspberry Pi OS image and enabling SSH.
-- Flux bootstrap and GitHub authentication.
-- Kubernetes Secrets, including anything needed by Helm releases and GHCR.
-- The checked-in Pi-hole values contain a literal `adminPassword`; replace it
-  with an existing Secret rather than restoring that value as-is.
-- Persistent volumes and other application data.
-- The legacy Helm releases (`ingress-nginx`, Hajimari, and Pi-hole). They are not
-  recreated by this playbook or by the currently checked-in Flux manifests.
-- Kubernetes and k3s upgrades.
-- Uninstalling k3s. The old Terraform had a destroy-time `k3s-uninstall.sh`
-  hook; Ansible does not perform destructive actions.
-
----
-
-## Prerequisites
-
-On the machine running Ansible:
-
-- Ansible installed, for example:
-
-  ```bash
-  python3 -m venv ~/.venvs/ansible
-  source ~/.venvs/ansible/bin/activate
-  python3 -m pip install ansible
-  ```
-
-- SSH access to the Pi, with a key or agent. The Pi should already be on the
-  network and have SSH enabled.
-- Connect once with `ssh` so the Pi's host key is trusted by the control machine.
-- A Raspberry Pi OS Lite 64-bit installation. The example inventory assumes a
-  `pi` user with sudo. If you use direct root SSH, adjust the inventory.
-- On an older Raspberry Pi OS release that still uses `/boot/cmdline.txt`,
-  override `common_cmdline_path` in `group_vars/all.yml`.
-
-## Inventory
+On the control machine:
 
 ```bash
+python3 -m venv ~/.venvs/ansible
+source ~/.venvs/ansible/bin/activate
+python3 -m pip install ansible
 cd ansible
+ansible-galaxy collection install -r requirements.yml
 cp inventory.example.ini inventory.ini
 $EDITOR inventory.ini
 ```
 
-`inventory.ini` is gitignored. The inventory values are:
+`inventory.ini` is gitignored and holds the SSH connection settings.
+The example targets the EliteDesk
+at **192.168.68.111** (assuming the same subnet as the old Pi). Replace
+`YOUR_SSH_USER` with your Debian user's name. The user must have sudo access.
+Trust the new host's SSH key by connecting manually first.
+
+To target a different machine, change `ansible_host` in this file. To manage
+multiple hosts, add inventory entries and select one with `--limit elitedesk`.
+Set `homelab_hostname` per host if using multiple hosts; its default is
+`homelab` in `group_vars/all.yml`.
+
+## Configure applications
+
+Host variables are split by purpose:
+
+```text
+host_vars/elitedesk/
+├── main.yml    # Ordinary settings and references to Vault variables
+└── vault.yml   # Encrypted secrets; create locally, then commit encrypted
+```
+
+`main.yml` is already committed. Create the secrets file using your own Vault
+password (store that password in your password manager, never in Git):
+
+```bash
+ansible-vault create host_vars/elitedesk/vault.yml
+```
+
+In the editor, enter this YAML with a strong, unique Pi-hole password:
+
+```yaml
+vault_compose_pihole_password: 'YOUR_PIHOLE_PASSWORD'
+```
+
+Save and exit. Vault encrypts the file on disk; the Vault password and Pi-hole
+password are separate secrets. Confirm the file's first line starts with
+`$ANSIBLE_VAULT;` before adding it to Git:
+
+```bash
+head -n 1 host_vars/elitedesk/vault.yml
+git add host_vars/elitedesk/vault.yml
+git commit -m "chore: add encrypted EliteDesk secrets"
+```
+
+Both files are intended to be committed. Never commit plaintext secrets or a
+Vault password file. Edit secrets with
+`ansible-vault edit host_vars/elitedesk/vault.yml`, not by decrypting the file
+in place. The encrypted file is not supplied by this repository until you create
+it with your own secrets and password.
+
+Ansible loads both YAML files automatically for inventory alias `elitedesk`.
+For another alias, name the directory to match it. If migrating an existing
+`host_vars/elitedesk.yml`, move its settings/secrets into this directory layout
+and remove the old file; don't keep both forms for the same host.
+
+Non-secret defaults (images, timezone, domains, upstream DNS) are in
+`roles/compose/defaults/main.yml`. Override them in `host_vars/elitedesk/main.yml` for one machine,
+or `group_vars/all.yml` for all machines.
+
+The two addresses have different purposes:
 
 | Variable | Purpose |
 | --- | --- |
-| `ansible_host` | Address Ansible uses to reach the Pi. |
-| `ansible_user` | SSH user. |
-| `ansible_become` | Set to `true` when using a non-root user with sudo. |
-| `k3s_node_ip` | The Pi's LAN IP. Must be an IP, not a DNS name. |
-| `pi_hostname` | Hostname the k3s node will use. Keep `segers` if the existing Pi-hole node affinity should keep matching. |
+| `ansible_host` (inventory) | SSH endpoint; may be a DNS name, VPN address, or management IP. |
+| `compose_bind_ip` (`host_vars/elitedesk/main.yml`) | LAN IPv4 address assigned to the target, used for published HTTP/HTTPS and DNS ports. |
 
-The k3s settings live in `group_vars/all.yml`:
+They may both be `192.168.68.111`, but are configured independently. Changing
+the SSH endpoint does not change service exposure. The role verifies that
+`compose_bind_ip` is assigned to the target; the default Pi-hole domain follows
+this bind IP.
 
-| Variable | Purpose |
-| --- | --- |
-| `k3s_version` | Pinned k3s version. |
-| `k3s_extra_tls_sans` | Optional extra API certificate SANs. |
-| `k3s_kubeconfig_mode` | Kubeconfig permissions. The default `0644` preserves the previous behaviour. |
+There is no `.env` file to maintain. Ansible renders the Compose YAML, including
+the password, with root-only permissions and suppresses its contents in task
+output. Vault protects secrets in the source file, not inside a running
+container: root and users with Docker access can still inspect them.
 
-Role defaults are in `roles/*/defaults/main.yml`.
+See [`../docs/compose.md`](../docs/compose.md) for routing, data migration,
+private images, and operational limitations.
 
 ## Run
 
-Check connectivity first:
+From `ansible/`:
 
 ```bash
-ansible -i inventory.ini pi -m ping
+ansible homelab -m ping --ask-vault-pass
+ansible-playbook site.yml --syntax-check --ask-vault-pass
+ansible-playbook site.yml --check --diff --ask-vault-pass
+ansible-playbook site.yml --ask-vault-pass
 ```
 
-Review the planned changes without applying them:
+Add `--ask-become-pass` if sudo requires a password. No command is run against
+the old Pi unless you explicitly put it in the inventory.
 
-```bash
-ansible-playbook -i inventory.ini site.yml --check --diff
-```
+The application role requires the Vault secret before it can deploy. A syntax
+check alone can run without `--ask-vault-pass` before `vault.yml` is created.
 
-Apply:
-
-```bash
-ansible-playbook -i inventory.ini site.yml
-```
-
-A real run may reboot the Pi once if the kernel command line changed. The
-playbook waits for the Pi to come back and then installs k3s.
-
-> The old Terraform installation already uses `v1.33.0+k3s1`. The older version
-> in `k3s/locals.tf` was not used by the install command. Change
-> `k3s_version` deliberately; the playbook does not perform upgrades.
+Check mode is only a preview: on a fresh host, tasks depending on a newly
+created apt key/repository or installed packages may fail because check mode
+does not create them. Compose startup is skipped entirely in check mode.
 
 ## Verify
 
 ```bash
-ssh pi@192.168.68.113 'sudo systemctl status k3s --no-pager'
-ssh pi@192.168.68.113 'sudo k3s kubectl get nodes -o wide'
-ssh pi@192.168.68.113 'sudo k3s kubectl get pods -A'
+ssh YOUR_SSH_USER@192.168.68.111 'sudo docker compose --project-directory /opt/homelab ps'
+curl -I --resolve mathijs.se:80:192.168.68.111 http://mathijs.se/
+curl --resolve mathijs.se:443:192.168.68.111 https://mathijs.se/
+curl --resolve www.mathijs.se:443:192.168.68.111 https://www.mathijs.se/
+curl -I http://dns.192.168.68.111.nip.io/admin/
+dig @192.168.68.111 example.com
 ```
 
-Copy the kubeconfig to the machine you will use for Flux and `kubectl`:
+The website's HTTP request should redirect to HTTPS. HTTPS checks require Caddy
+to have obtained publicly trusted certificates first; see the [HTTPS cutover
+requirements](../docs/compose.md#https-and-public-cutover). Do not bypass
+certificate verification with `curl -k` when accepting the migration.
 
-```bash
-mkdir -p ~/.kube
-ssh pi@192.168.68.113 'sudo cat /etc/rancher/k3s/k3s.yaml' > ~/.kube/config
-chmod 600 ~/.kube/config
-kubectl get nodes
-```
+The stack's startup wait checks container running/health status where available;
+it does not verify certificate issuance or replace the checks above.
 
-The kubeconfig already points at the node IP, and that IP is included in the
-API certificate SANs. If you need to reach the API by DNS name, add it to
-`k3s_extra_tls_sans` before provisioning.
+## Existing hosts and safety
 
----
-
-## Flux restoration
-
-Flux is not installed by Ansible. Bootstrap it after k3s is healthy, from the
-machine holding the kubeconfig.
-
-Install the Flux CLI and authenticate to GitHub. The token must not be committed
-to this repository:
-
-```bash
-export GITHUB_TOKEN='...'
-flux bootstrap github \
-  --owner=msegers \
-  --repository=homelab \
-  --branch=main \
-  --path=flux \
-  --personal
-```
-
-`flux bootstrap github` creates a deploy key by default and stores its private
-half in a Kubernetes Secret in the `flux-system` namespace. The public half is
-registered as a GitHub deploy key with write access.
-
-### If the old deploy key is lost
-
-The private key is not recoverable from GitHub; GitHub only stores the public
-key. After reinstalling the cluster, re-run the bootstrap command and add the
-newly generated public key to the repository's deploy keys, replacing the old
-one if necessary. If you backed up the `flux-system` Secret from the old
-cluster, restore that instead.
-
-Using `--token-auth` with a GitHub token is an alternative. The token is then
-stored in the cluster, so treat cluster Secret backups as sensitive either way.
-
-Verify Flux:
-
-```bash
-flux check
-flux get sources git -A
-flux get kustomizations -A
-kubectl -n flux-system get gitrepositories
-```
-
-### Existing Flux configuration to check manually
-
-These files were intentionally not changed:
-
-- `flux/apps/mathijs-se/image-automation.yaml` references a GitRepository named
-  `homelab`. Confirm that the GitRepository created or restored for this repo
-  uses that name; a default Flux bootstrap often names it `flux-system`.
-- `flux/apps/mathijs-se/helmrelease.yaml` references a GitRepository named
-  `mathijs-se` for the chart source. That GitRepository is not defined in this
-  repository, so restore or recreate it separately.
-- `flux/apps/mathijs-se/images.yaml` expects tags matching
-  `^0\.0\.[0-9]+$`. Make sure the website build publishes tags that match. In
-  particular, `sha-...` tags will not satisfy that policy.
-- There is no root `flux/kustomization.yaml` in this checkout. Confirm the path
-  used by the Flux root Kustomization during restoration; the existing manifests
-  may need to be wired up manually.
-
----
-
-## Fresh install vs. restoring an existing cluster
-
-Provisioning a fresh host with Ansible gives you an empty k3s cluster. It does
-not restore the old cluster.
-
-### Fresh cluster
-
-1. Flash Raspberry Pi OS Lite 64-bit, enable SSH, and configure networking.
-2. Set the desired hostname and IP in `inventory.ini`.
-3. Run the playbook.
-4. Bootstrap Flux.
-5. Apply or restore the application layer.
-
-### Restoring the previous cluster
-
-In addition to the fresh-cluster steps:
-
-- Restore Kubernetes Secrets from a backup, or recreate them. They are not
-  stored in this repository.
-- Restore persistent data before workloads need it. k3s local-path volumes
-  normally live under `/var/lib/rancher/k3s/storage` on the Pi. Back that up
-  before rebuilding.
-- Restore or recreate the legacy Helm releases. The Terraform in `apps/` is a
-  reference, not an Ansible-managed deployment.
-- Restore any GHCR pull secret if the website image is private.
-- Confirm the Pi-hole and Hajimari configuration. Their checked-in values
-  disable persistence, but verify the actual cluster before assuming there is no
-  data to restore.
-
-Check what actually exists before a rebuild:
-
-```bash
-kubectl get pvc -A
-kubectl get secrets -A
-helm list -A
-```
-
-K3s upgrades are intentionally not automated. Upgrade manually when you are
-ready, and only after taking a backup.
+- Use a fresh Debian installation. Existing distro Docker/containerd packages
+  may conflict with Docker's packages; inspect and resolve these manually.
+- The playbook refuses a host with a k3s server service file. It never runs the
+  k3s uninstaller or deletes Kubernetes data.
+- There are no automatic reboots, router changes, firewall changes, or user
+  additions to the root-equivalent `docker` group.
+- Reserve the EliteDesk IP in your router. Check ports TCP 80/443 and TCP/UDP 53
+  are free before deploying (`sudo ss -lntup`). A DNS service bound on all host
+  interfaces can conflict with Pi-hole; resolve that deliberately, not by
+  blindly disabling the host resolver.
+- Back up and restore application data separately before switching traffic.

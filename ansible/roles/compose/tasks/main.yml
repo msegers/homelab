@@ -1,0 +1,54 @@
+---
+- name: Require an explicit service bind address assigned to this host
+  ansible.builtin.assert:
+    that:
+      - compose_bind_ip is defined
+      - compose_bind_ip in ansible_all_ipv4_addresses
+    fail_msg: Set compose_bind_ip to a LAN IPv4 address assigned to the target; ansible_host is only for SSH.
+
+- name: Require Pi-hole password
+  ansible.builtin.assert:
+    that:
+      - compose_pihole_password is defined
+      - compose_pihole_password is string
+      - compose_pihole_password | length > 0
+    fail_msg: Set compose_pihole_password in host_vars (Ansible Vault recommended).
+  no_log: true
+
+- name: Create stack directory
+  ansible.builtin.file:
+    path: "{{ compose_project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Copy proxy configuration
+  ansible.builtin.copy:
+    src: Caddyfile
+    dest: "{{ compose_project_dir }}/Caddyfile"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart proxy
+
+- name: Render Compose configuration from Ansible variables
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ compose_project_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+# A fresh host has no Docker CLI in check mode. Deployment is verified on apply.
+- name: Start homelab stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ compose_project_dir }}"
+    project_name: homelab
+    state: present
+    pull: missing
+    wait: true
+    wait_timeout: 180
+  when: not ansible_check_mode
+  no_log: true

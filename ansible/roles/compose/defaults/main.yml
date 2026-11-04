@@ -1,0 +1,12 @@
+---
+compose_project_dir: /opt/homelab
+# Required: compose_bind_ip is the target's LAN IPv4 address, not its SSH endpoint.
+compose_timezone: Europe/Stockholm
+compose_pihole_image: pihole/pihole:latest
+compose_caddy_image: caddy:2-alpine
+compose_website_image: ghcr.io/msegers/mathijs.se:0.0.5
+compose_website_domain: mathijs.se
+compose_website_www_domain: www.mathijs.se
+compose_pihole_domain: "dns.{{ compose_bind_ip }}.nip.io"
+compose_pihole_upstreams: "8.8.8.8;8.8.4.4"
+# Required: set compose_pihole_password in host_vars, preferably using Vault.
