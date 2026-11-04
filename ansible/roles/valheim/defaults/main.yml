@@ -1,0 +1,32 @@
+---
+valheim_enabled: false
+valheim_user: homelab-valheim
+valheim_home: /var/lib/homelab-valheim
+valheim_project_dir: "{{ valheim_home }}/stack"
+valheim_project_name: homelab-valheim
+# Maintained upstream image, pinned to the verified amd64 release manifest.
+valheim_server_image: ghcr.io/community-valheim-tools/valheim-server@sha256:f34d67ba8023e343b10ffda0144759a8c8d986f276510460315a01051bed8a6d
+valheim_runtime_dir: "/run/user/{{ valheim_account.uid }}"
+valheim_docker_socket: "{{ valheim_runtime_dir }}/docker.sock"
+
+valheim_config_dir: "{{ valheim_home }}/config"
+valheim_worlds_dir: "{{ valheim_home }}/saves"
+valheim_backups_dir: "{{ valheim_home }}/backups"
+valheim_data_dir: "{{ valheim_home }}/server"
+valheim_state_dir: "{{ valheim_home }}/control"
+valheim_required_mounts: []
+
+valheim_game_bind_ip: "{{ compose_bind_ip }}"
+valheim_server_port: 2456
+valheim_server_name: Homelab Valheim
+valheim_world_name: Homelab
+valheim_server_password: "{{ vault_valheim_server_password }}"
+# Steam A2S player counts require public listing and no crossplay. This does
+# not configure router port forwarding. Unknown counts never trigger shutdown.
+valheim_server_public: true
+valheim_crossplay: false
+valheim_timezone: Europe/Stockholm
+valheim_stop_timeout: 120
+valheim_idle_shutdown_enabled: true
+valheim_idle_timeout_seconds: 3600
+valheim_idle_poll_seconds: 60

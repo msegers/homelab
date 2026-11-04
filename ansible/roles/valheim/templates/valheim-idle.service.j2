@@ -1,0 +1,10 @@
+[Unit]
+Description=Stop Valheim after confirmed player inactivity
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/homelab-valheim/control.py --config {{ valheim_state_dir }}/config.json idle
+TimeoutStartSec={{ (valheim_stop_timeout | int) + 180 }}
+UMask=0077
+NoNewPrivileges=true

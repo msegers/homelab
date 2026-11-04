@@ -8,3 +8,5 @@
     - common
     - docker
     - compose
+    - role: valheim
+      tags: [valheim]

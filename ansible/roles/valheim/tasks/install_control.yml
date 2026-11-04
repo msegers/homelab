@@ -1,0 +1,24 @@
+---
+- name: Create root-owned script directory
+  ansible.builtin.file:
+    path: /usr/local/libexec/homelab-valheim
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install controller
+  ansible.builtin.copy:
+    src: control.py
+    dest: /usr/local/libexec/homelab-valheim/control.py
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install administrative command
+  ansible.builtin.template:
+    src: valheimctl.sh.j2
+    dest: /usr/local/sbin/valheimctl
+    owner: root
+    group: root
+    mode: "0755"

@@ -1,0 +1,16 @@
+---
+- name: Set up the dedicated rootless Docker daemon
+  ansible.builtin.import_tasks: rootless.yml
+  when: valheim_enabled | bool
+
+- name: Configure optional Valheim installation
+  ansible.builtin.import_tasks: provision.yml
+  when: valheim_enabled | bool
+
+- name: Install server control scripts
+  ansible.builtin.import_tasks: install_control.yml
+  when: valheim_enabled | bool
+
+- name: Configure automatic idle shutdown
+  ansible.builtin.import_tasks: idle_timer.yml
+  when: valheim_enabled | bool

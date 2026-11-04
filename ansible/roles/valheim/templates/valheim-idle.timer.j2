@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Valheim player inactivity every {{ valheim_idle_poll_seconds }} seconds
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec={{ valheim_idle_poll_seconds }}s
+AccuracySec=1s
+Unit=valheim-idle.service
+
+[Install]
+WantedBy=timers.target
