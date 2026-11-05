@@ -6,13 +6,13 @@ introducing a frontend framework or a separate service. The service/binary names
 remain `valheim-dashboard` for compatibility. Only the typed Valheim operations
 cross the restricted broker socket; the web account still has no Docker access.
 
-## Hostname: first stage
+## Private hostnames and trusted HTTPS
 
-The host configuration explicitly allows `lan.mathijs.se` in addition to its LAN
+The host configuration explicitly allows `lab.mathijs.se` in addition to its LAN
 IP. This is a Host-header allowlist, **not DNS configuration or access control**.
 The real TCP peer must still be in `192.168.68.0/24` or loopback.
 
-Ansible now prepares Pi-hole local records for `lan.mathijs.se` and
+Ansible prepares Pi-hole local records for `lab.mathijs.se` and
 `pihole.mathijs.se`, both pointing to `192.168.68.111`,
 through `compose_pihole_local_hosts`. The reusable default is `null` (unmanaged);
 an explicit list owns **all** Pi-hole local-host records and makes that setting
@@ -24,19 +24,59 @@ No LAN clients currently use Pi-hole for DNS. For initial testing after an
 authorized deployment, add this to a client hosts file:
 
 ```text
-192.168.68.111 lan.mathijs.se pihole.mathijs.se
+192.168.68.111 lab.mathijs.se pihole.mathijs.se
 ```
 
-The implemented direct listener is still
-`http://lan.mathijs.se:8787/valheim`. It is not yet the requested port-free URL.
+After an authorized deployment, use **`https://lab.mathijs.se/valheim`**.
+Caddy terminates browser-trusted HTTPS and proxies to the private HTTP backend
+on port 8787. The port-free route checks the real LAN peer before serving any
+page, token or API. Only the explicitly discovered Caddy `/32` peers may supply
+the HTTPS forwarding scheme; other clients cannot spoof it. Host, Origin and
+action-token checks remain enabled. Re-run the Valheim playbook after recreating
+the proxy container if its IP changes; stale peers fail closed.
 For central resolution later, deploy the record and configure router DHCP or
 individual clients to use Pi-hole. Local records are
 not usable by clients that choose another resolver (including browser DoH).
 No public DNS record, router forwarding, or router conversion is required.
 
+### Cloudflare certificate setup (before deployment)
+
+Cloudflare hosts the authoritative DNS for `mathijs.se`. Create an API token in
+Cloudflare **My Profile → API Tokens → Create Token → Custom token**:
+
+- Permissions: **Zone → Zone → Read** and **Zone → DNS → Edit**.
+- Zone resources: **Include → Specific zone → mathijs.se** only.
+- Do not use the global API key or an account-wide token. If setting expiration,
+  plan rotation before expiry so renewals continue working.
+
+From `ansible/`, edit the **existing** Vault, preserving its passwords:
+
+```bash
+ansible-vault edit host_vars/homelab/vault.yml
+```
+
+Add `vault_cloudflare_api_token: 'YOUR_SCOPED_TOKEN'` in that editor, never in
+chat, a shell command, or plaintext Git files. The committed host configuration
+enables `compose_private_tls_enabled` and references this Vault key. Reusable
+defaults leave TLS opt-in and private routes loopback-only. Missing credentials
+abort deployment rather than falling back to an untrusted certificate.
+
+Ansible builds Caddy 2.11.8 with `caddy-dns/cloudflare` v0.2.4; the build context
+excludes the token-bearing Compose file. The runtime token is in the root-only
+Compose configuration/container environment; Docker/root administrators can
+read it. Container inspection is hidden from Ansible output. Do not publish raw
+`docker inspect` or `docker compose config` output.
+
+Only the private hostnames use DNS-01: Caddy creates temporary public ACME TXT
+records through Cloudflare, without public A/AAAA records or new forwarding.
+Outbound HTTPS and DNS are needed for issuance and renewal. Existing public-site
+certificate configuration and persistent Caddy certificate storage are unchanged.
+Certificates expose these hostnames in public Certificate Transparency logs;
+they do not make the applications public. No private CA installation is needed.
+
 ## Pi-hole first use
 
-Target after an authorized deployment: **`http://pihole.mathijs.se/admin/`**.
+Target after an authorized deployment: **`https://pihole.mathijs.se/admin/`**.
 The existing Pi-hole Caddy route now uses that hostname on this host, with an
 explicit `192.168.68.0/24` real-TCP-peer allowlist. It rejects other peers with
 403 on all paths, including the admin API; spoofed forwarding headers do not
@@ -50,7 +90,7 @@ You do **not** need to change the Deco or enable DHCP in Pi-hole to try it:
    Alternatively, test routing without DNS with:
 
    ```bash
-   curl --resolve pihole.mathijs.se:80:192.168.68.111 http://pihole.mathijs.se/admin/
+    curl --resolve pihole.mathijs.se:443:192.168.68.111 https://pihole.mathijs.se/admin/
    ```
 
 2. Open the admin URL in the browser, sign in, and check Pi-hole is healthy.
@@ -58,7 +98,7 @@ You do **not** need to change the Deco or enable DHCP in Pi-hole to try it:
 
    ```bash
    dig @192.168.68.111 pihole.mathijs.se A
-   dig @192.168.68.111 lan.mathijs.se A
+    dig @192.168.68.111 lab.mathijs.se A
    dig @192.168.68.111 example.com A
    ```
 
@@ -88,15 +128,15 @@ Deco in Access Point mode does not own DHCP; configure the upstream router
 instead. The model alone does not prove how external source addresses appear
 at Caddy; port-free routing still needs the check below.
 
-## Port-free HTTP: pending networking verification
+## Port-free HTTPS: networking acceptance required
 
-Target: `http://lan.mathijs.se/valheim`. A second LAN IP is **not required**.
-The existing Caddy listener at `192.168.68.111:80` can route by hostname while
+Target: `https://lab.mathijs.se/valheim`. A second LAN IP is **not required**.
+The existing Caddy listener at `192.168.68.111:443` routes by hostname while
 continuing to serve `mathijs.se`. However, public website forwarding also reaches
 that listener: a private DNS record alone does not prevent someone outside the
-LAN from supplying `Host: lan.mathijs.se`.
+LAN from supplying `Host: lab.mathijs.se` and matching TLS SNI.
 
-Before adding the route:
+Before relying on the deployed routes:
 
 1. Verify the router's public forwarding preserves the external client's source
    address. If it SNATs public traffic into a trusted LAN address, a subnet rule
@@ -111,11 +151,11 @@ Before adding the route:
 4. Test LAN page/actions and rejection from a real external connection, including
    a forged Host header. Confirm the public website is unchanged.
 
-No **Home Tools** Caddy route is included yet (the existing Pi-hole route is
-updated separately): the above verification needs
-operator input, not assumptions about the live router or Docker bridge. A
-separate LAN IP remains an optional stricter isolation arrangement, not a DNS
-requirement. HTTPS and making the homelab a router are outside this stage.
+Both private routes are included, but none of these live checks have been run.
+The above verification needs operator input, not assumptions about the live
+router or Docker bridge. A separate LAN IP remains an optional stricter
+isolation arrangement, not a DNS requirement. HTTP redirects may be visible to
+external peers, but HTTPS application content must return 403 to them.
 
 ## Acceptance still required
 

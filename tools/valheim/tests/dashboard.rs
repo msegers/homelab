@@ -116,6 +116,96 @@ async fn missing_host_is_rejected() {
 }
 
 #[tokio::test]
+async fn https_origin_requires_an_exact_trusted_proxy_peer() {
+    use homelab_valheim::dashboard::Access;
+    let access = Access::new(
+        "192.168.68.111".parse().unwrap(),
+        vec!["192.168.68.0/24".parse().unwrap()],
+    )
+    .unwrap()
+    .with_hosts(vec!["lab.mathijs.se".into()])
+    .unwrap();
+    assert!(
+        access
+            .clone()
+            .with_proxies(vec!["172.18.0.0/16".parse().unwrap()])
+            .is_err()
+    );
+    assert!(
+        access
+            .clone()
+            .with_proxies(vec!["8.8.8.8/32".parse().unwrap()])
+            .is_err()
+    );
+    let access = access
+        .with_proxies(vec!["172.18.0.2/32".parse().unwrap()])
+        .unwrap();
+    for (peer, scheme, origin, expected) in [
+        (
+            "172.18.0.2",
+            "https",
+            "https://lab.mathijs.se",
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            "172.18.0.2",
+            "https",
+            "http://lab.mathijs.se",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "172.18.0.2",
+            "https,http",
+            "https://lab.mathijs.se",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "192.168.68.42",
+            "https",
+            "https://lab.mathijs.se",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "192.168.68.42",
+            "https",
+            "http://lab.mathijs.se",
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            "172.18.0.3",
+            "https",
+            "https://lab.mathijs.se",
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let response = router(WebState {
+            access: access.clone(),
+            ..state()
+        })
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/action")
+                .header("host", "lab.mathijs.se")
+                .header("origin", origin)
+                .header("x-forwarded-proto", scheme)
+                .header("x-valheim-token", "test-token")
+                .header("content-type", "application/json")
+                .extension(ConnectInfo(
+                    format!("{peer}:12345")
+                        .parse::<std::net::SocketAddr>()
+                        .unwrap(),
+                ))
+                .body(Body::from(r#"{"action":"start"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), expected, "{peer} {scheme} {origin}");
+    }
+}
+
+#[tokio::test]
 async fn mutations_require_origin_token_and_allowlisted_action() {
     for (origin, token) in [
         ("http://evil.example", "test-token"),
@@ -380,22 +470,23 @@ async fn world_payloads_are_validated_before_contacting_the_broker() {
 fn explicitly_allowed_dns_hosts_do_not_allow_other_names() {
     use homelab_valheim::dashboard::Access;
     let access = Access::default()
-        .with_hosts(vec!["lan.mathijs.se".into()])
+        .with_hosts(vec!["lab.mathijs.se".into()])
         .unwrap();
-    assert!(access.allows_host("lan.mathijs.se:8787"));
-    assert!(access.allows_host("LAN.mathijs.se"));
+    assert!(access.allows_host("lab.mathijs.se:8787"));
+    assert!(access.allows_host("LAB.mathijs.se"));
     for host in [
         "mathijs.se",
-        "lan.mathijs.se.evil.test",
-        "lan.mathijs.se@evil.test",
-        "lan.mathijs.se:0",
+        "lan.mathijs.se",
+        "lab.mathijs.se.evil.test",
+        "lab.mathijs.se@evil.test",
+        "lab.mathijs.se:0",
     ] {
         assert!(!access.allows_host(host));
     }
     for host in [
         "*.mathijs.se",
-        "http://lan.mathijs.se",
-        "lan.mathijs.se:8787",
+        "http://lab.mathijs.se",
+        "lab.mathijs.se:8787",
         "bad name.test",
         "-flag.test",
     ] {

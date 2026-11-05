@@ -14,4 +14,17 @@ compose_pihole_upstreams: "8.8.8.8;8.8.4.4"
 # null leaves Pi-hole's existing local hosts unmanaged. A list owns the full list;
 # import any existing manually managed records before opting in.
 compose_pihole_local_hosts: null
+
+# Optional trusted HTTPS for private routes using Cloudflare DNS-01.
+compose_private_tls_enabled: false
+compose_cloudflare_api_token: ""
+compose_caddy_builder_image: caddy:2.11.8-builder-alpine
+compose_caddy_runtime_image: caddy:2.11.8-alpine
+compose_caddy_cloudflare_version: v0.2.4
+
+# Optional LAN-only route through the existing proxy; no extra listener.
+compose_home_tools_enabled: false
+compose_home_tools_domain: lab.mathijs.se
+compose_home_tools_port: 8787
+compose_home_tools_allowed_networks: [127.0.0.0/8]
 # Required: set compose_pihole_password in host_vars, preferably using Vault.

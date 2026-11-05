@@ -137,6 +137,7 @@ pub struct Access {
     pub bind: Ipv4Addr,
     networks: Vec<Ipv4Net>,
     hosts: Vec<String>,
+    proxies: Vec<Ipv4Net>,
 }
 
 impl Access {
@@ -164,7 +165,19 @@ impl Access {
             bind,
             networks,
             hosts: Vec::new(),
+            proxies: Vec::new(),
         })
+    }
+
+    pub fn with_proxies(mut self, proxies: Vec<Ipv4Net>) -> Result<Self> {
+        for proxy in &proxies {
+            ensure!(
+                proxy.prefix_len() == 32 && proxy.addr().is_private(),
+                "Trusted proxies must be exact private IPv4 /32 peers"
+            );
+        }
+        self.proxies = proxies;
+        Ok(self)
     }
 
     pub fn with_hosts(mut self, hosts: Vec<String>) -> Result<Self> {
@@ -194,7 +207,12 @@ impl Access {
     pub fn allows_peer(&self, peer: IpAddr) -> bool {
         match peer {
             IpAddr::V4(ip) => {
-                ip.is_loopback() || self.networks.iter().any(|network| network.contains(&ip))
+                ip.is_loopback()
+                    || self
+                        .networks
+                        .iter()
+                        .chain(&self.proxies)
+                        .any(|network| network.contains(&ip))
             }
             IpAddr::V6(_) => false,
         }
@@ -283,7 +301,21 @@ pub fn allowed_host(host: &str) -> bool {
     Access::default().allows_host(host)
 }
 
-async fn private_headers(State(state): State<WebState>, request: Request, next: Next) -> Response {
+async fn private_headers(
+    State(state): State<WebState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let trusted_proxy = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .is_some_and(|peer| match peer.0.ip() {
+            IpAddr::V4(ip) => state.access.proxies.iter().any(|proxy| proxy.contains(&ip)),
+            IpAddr::V6(_) => false,
+        });
+    if !trusted_proxy {
+        request.headers_mut().remove("x-forwarded-proto");
+    }
     // Trust the TCP peer, never spoofable Forwarded/X-Forwarded-For headers.
     if !request
         .extensions()
@@ -357,7 +389,14 @@ async fn action(
         .get("x-valheim-token")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
-    if origin != format!("http://{host}")
+    let scheme = match headers
+        .get("x-forwarded-proto")
+        .and_then(|h| h.to_str().ok())
+    {
+        Some("https") => "https",
+        _ => "http",
+    };
+    if origin != format!("{scheme}://{host}")
         || token != state.token
         || matches!(command.action, Action::Status | Action::Worlds)
     {

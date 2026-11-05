@@ -7,7 +7,7 @@ After=valheim-dashboard-broker.service
 Type=simple
 User=valheim-dashboard
 Group=valheim-dashboard
-ExecStart=/usr/local/libexec/homelab-valheim/valheim-dashboard web --port {{ valheim_dashboard_port | int }} --bind {{ valheim_dashboard_bind_ip }}{% for network in valheim_dashboard_allowed_networks %} --allow-network {{ network }}{% endfor %}{% for host in valheim_dashboard_allowed_hosts %} --allow-host {{ host }}{% endfor %}
+ExecStart=/usr/local/libexec/homelab-valheim/valheim-dashboard web --port {{ valheim_dashboard_port | int }} --bind {{ valheim_dashboard_bind_ip }}{% for network in valheim_dashboard_allowed_networks %} --allow-network {{ network }}{% endfor %}{% for network in valheim_dashboard_proxy_networks | default([]) %} --trusted-proxy {{ network }}{% endfor %}{% for host in valheim_dashboard_allowed_hosts %} --allow-host {{ host }}{% endfor %}
 
 Restart=on-failure
 RestartSec=3

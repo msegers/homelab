@@ -44,6 +44,17 @@ class ProvisionTests(unittest.TestCase):
                 "src": str(ROLE / "templates" / "{{ item }}.j2"),
                 "dest": str(self.root / "{{ item }}"),
             }, "loop": ["valheim-dashboard.service", "valheim-dashboard-broker.service", "valheim-idle.service"]}]
+        if tasks_from == "dashboard_proxy":
+            variables = yaml.safe_load((ROLE / "defaults/main.yml").read_text()) | self.variables
+            tasks = yaml.safe_load((ROLE / "tasks/dashboard_proxy.yml").read_text())
+            inspection = tasks[1]["block"][0]
+            self.assertTrue(inspection["no_log"])
+            self.assertEqual(inspection["community.docker.docker_container_info"]["name"], "{{ valheim_dashboard_proxy_container }}")
+            tasks[1]["block"][0] = {"ansible.builtin.set_fact": {
+                "valheim_dashboard_proxy_info": variables.get("proxy_fixture", {})}}
+            tasks.append({"ansible.builtin.template": {
+                "src": str(ROLE / "templates/valheim-dashboard.service.j2"),
+                "dest": str(self.root / "valheim-dashboard.service")}})
         if tasks_from in ["provision", "account_preflight", "account_sudo"]:
             variables = yaml.safe_load((ROLE / "defaults/main.yml").read_text()) | self.variables
             source = "account.yml" if tasks_from.startswith("account_") else "provision.yml"
@@ -79,6 +90,31 @@ class ProvisionTests(unittest.TestCase):
 
     def config(self):
         return json.loads((self.root / "home/control/config.json").read_text())
+
+    def test_dashboard_proxy_discovery_authorizes_exact_private_peers_only(self):
+        self.variables.update(valheim_dashboard_proxy_container="homelab-proxy-1", proxy_fixture={
+            "exists": True, "container": {"State": {"Running": True}, "NetworkSettings": {"Networks": {
+                "private": {"IPAddress": "172.18.0.2"}, "other": {"IPAddress": "10.9.0.3"},
+                "public": {"IPAddress": "8.8.8.8"}, "ipv6_only": {"IPAddress": ""}}}}})
+        self.run_role("dashboard_proxy")
+        unit = (self.root / "valheim-dashboard.service").read_text()
+        self.assertIn("--trusted-proxy 172.18.0.2/32", unit)
+        self.assertIn("--trusted-proxy 10.9.0.3/32", unit)
+        self.assertNotIn("8.8.8.8", unit)
+        self.assertNotIn("--allow-network 172.18", unit)
+        self.variables["valheim_dashboard_proxy_container"] = ""
+        self.run_role("dashboard_proxy")
+        self.assertNotIn("--trusted-proxy", (self.root / "valheim-dashboard.service").read_text())
+
+    def test_dashboard_proxy_discovery_fails_closed(self):
+        self.variables["valheim_dashboard_proxy_container"] = "homelab-proxy-1"
+        for fixture in [{"exists": False},
+                        {"exists": True, "container": {"State": {"Running": False}}},
+                        {"exists": True, "container": {"State": {"Running": True}, "NetworkSettings": {
+                            "Networks": {"public": {"IPAddress": "8.8.8.8"}}}}}]:
+            with self.subTest(fixture=fixture):
+                self.variables["proxy_fixture"] = fixture
+                self.run_role("dashboard_proxy", expect_success=False)
 
     def test_sudo_check_requires_explicit_denial_regardless_of_exit_status(self):
         denial = "User valheim-game is not allowed to run sudo on homelab.\n"

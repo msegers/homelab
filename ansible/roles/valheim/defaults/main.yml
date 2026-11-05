@@ -46,3 +46,5 @@ valheim_dashboard_port: 8787
 valheim_dashboard_bind_ip: 127.0.0.1
 valheim_dashboard_allowed_networks: [127.0.0.0/8]
 valheim_dashboard_allowed_hosts: []
+# Empty disables proxy discovery; reusable defaults remain loopback-only.
+valheim_dashboard_proxy_container: ""

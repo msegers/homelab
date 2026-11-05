@@ -21,13 +21,36 @@
       - compose_pihole_allowed_networks is sequence and compose_pihole_allowed_networks is not string
       - compose_pihole_allowed_networks | length > 0
 
-- name: Validate private Pi-hole admin network arguments
+- name: Require a vaulted Cloudflare token for private trusted HTTPS
+  ansible.builtin.assert:
+    that:
+      - compose_cloudflare_api_token is string
+      - compose_cloudflare_api_token | length > 0
+    fail_msg: Set compose_cloudflare_api_token using a scoped Cloudflare API token in Ansible Vault.
+  when: compose_private_tls_enabled | bool
+  no_log: true
+
+- name: Validate optional private Home Tools route
+  ansible.builtin.assert:
+    that:
+      - compose_home_tools_allowed_networks is sequence and compose_home_tools_allowed_networks is not string
+      - compose_home_tools_allowed_networks | length > 0
+      - compose_home_tools_domain is string
+      - compose_home_tools_domain | length <= 253
+      - compose_home_tools_domain is match('^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$')
+      - compose_home_tools_domain not in [compose_website_domain, compose_website_www_domain, compose_pihole_domain]
+      - 1024 <= compose_home_tools_port | int <= 65535
+      - compose_bind_ip is match('^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)')
+    fail_msg: Home Tools requires a distinct hostname, private upstream, unprivileged backend port and explicit LAN peers.
+  when: compose_home_tools_enabled | bool
+
+- name: Validate private proxy client network arguments
   ansible.builtin.assert:
     that:
       - item is string
       - item is match('^(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/(8|9|[12][0-9]|3[0-2])|192\.168\.[0-9]{1,3}\.[0-9]{1,3}/(1[6-9]|2[0-9]|3[0-2])|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}/(1[2-9]|2[0-9]|3[0-2])|127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/(8|9|[12][0-9]|3[0-2]))$')
     fail_msg: Use explicit RFC1918 or loopback IPv4 CIDRs, never public or wildcard ranges.
-  loop: "{{ compose_pihole_allowed_networks }}"
+  loop: "{{ compose_pihole_allowed_networks + (compose_home_tools_allowed_networks if compose_home_tools_enabled | bool else []) }}"
 
 - name: Validate local DNS record ownership setting
   ansible.builtin.assert:
@@ -51,14 +74,32 @@
     group: root
     mode: "0700"
 
-- name: Copy proxy configuration
-  ansible.builtin.copy:
-    src: Caddyfile
+- name: Render proxy configuration
+  ansible.builtin.template:
+    src: Caddyfile.j2
     dest: "{{ compose_project_dir }}/Caddyfile"
     owner: root
     group: root
     mode: "0644"
   notify: Restart proxy
+
+- name: Render Cloudflare-enabled Caddy build
+  ansible.builtin.template:
+    src: Dockerfile.caddy.j2
+    dest: "{{ compose_project_dir }}/Dockerfile.caddy"
+    owner: root
+    group: root
+    mode: "0644"
+  when: compose_private_tls_enabled | bool
+
+- name: Exclude secrets and unrelated files from the Caddy build context
+  ansible.builtin.copy:
+    src: caddy.dockerignore
+    dest: "{{ compose_project_dir }}/Dockerfile.caddy.dockerignore"
+    owner: root
+    group: root
+    mode: "0644"
+  when: compose_private_tls_enabled | bool
 
 - name: Render Compose configuration from Ansible variables
   ansible.builtin.template:
@@ -76,6 +117,7 @@
     project_name: homelab
     state: present
     pull: missing
+    build: "{{ 'always' if compose_private_tls_enabled | bool else 'policy' }}"
     wait: true
     wait_timeout: 180
   when: not ansible_check_mode

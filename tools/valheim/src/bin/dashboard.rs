@@ -21,6 +21,8 @@ enum Mode {
         networks: Vec<Ipv4Net>,
         #[arg(long = "allow-host")]
         hosts: Vec<String>,
+        #[arg(long = "trusted-proxy")]
+        proxies: Vec<Ipv4Net>,
         #[arg(long, default_value_t = 8787)]
         port: u16,
         #[arg(long, default_value = dashboard::SOCKET)]
@@ -46,11 +48,14 @@ async fn main() -> anyhow::Result<()> {
             bind,
             networks,
             hosts,
+            proxies,
         } => {
             dashboard::web(
                 port,
                 socket,
-                dashboard::Access::new(bind, networks)?.with_hosts(hosts)?,
+                dashboard::Access::new(bind, networks)?
+                    .with_hosts(hosts)?
+                    .with_proxies(proxies)?,
             )
             .await
         }

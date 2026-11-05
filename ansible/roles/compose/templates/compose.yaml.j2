@@ -2,16 +2,31 @@ name: homelab
 
 services:
   proxy:
+{% if compose_private_tls_enabled | bool %}
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    image: homelab-caddy-cloudflare:{{ compose_caddy_cloudflare_version }}
+{% else %}
     image: {{ compose_caddy_image | to_json | replace('$', '$$') }}
+{% endif %}
     restart: unless-stopped
     ports:
       - {{ (compose_bind_ip ~ ':80:80') | to_json | replace('$', '$$') }}
       - {{ (compose_bind_ip ~ ':443:443') | to_json | replace('$', '$$') }}
     environment:
+{% if compose_private_tls_enabled | bool %}
+      CF_API_TOKEN: {{ compose_cloudflare_api_token | to_json | replace('$', '$$') }}
+{% endif %}
       WEBSITE_DOMAIN: {{ compose_website_domain | to_json | replace('$', '$$') }}
       WEBSITE_WWW_DOMAIN: {{ compose_website_www_domain | to_json | replace('$', '$$') }}
       PIHOLE_DOMAIN: {{ compose_pihole_domain | to_json | replace('$', '$$') }}
       PIHOLE_ALLOWED_NETWORKS: {{ compose_pihole_allowed_networks | join(' ') | to_json | replace('$', '$$') }}
+{% if compose_home_tools_enabled | bool %}
+      HOME_TOOLS_DOMAIN: {{ compose_home_tools_domain | to_json | replace('$', '$$') }}
+      HOME_TOOLS_ALLOWED_NETWORKS: {{ compose_home_tools_allowed_networks | join(' ') | to_json | replace('$', '$$') }}
+      HOME_TOOLS_UPSTREAM: {{ (compose_bind_ip ~ ':' ~ (compose_home_tools_port | int)) | to_json | replace('$', '$$') }}
+{% endif %}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

@@ -167,7 +167,7 @@ For now these safety archives use the existing local backup directory; move
 is ready. Changing the image's scheduled-backup setting takes effect on the next
 game start/recreation, not by Ansible restarting the game.
 
-For LAN hostname and port-free access planning, see [Home Tools](home-tools.md).
+For port-free trusted HTTPS and DNS setup, see [Home Tools](home-tools.md).
 
 ### Installation and access
 
@@ -187,6 +187,12 @@ bind addresses and public/broad client ranges. Reusable defaults remain
 
 Deploy from the repository root after installing the Rust prerequisites above:
 
+For the configured homelab, first deploy the Compose role through `site.yml`
+after the [Cloudflare Vault setup](home-tools.md#cloudflare-certificate-setup-before-deployment).
+Dashboard provisioning inspects the configured running Caddy container and
+trusts only its private `/32` addresses. The Valheim-only command below requires
+that proxy to exist already; it does not deploy Caddy.
+
 ```bash
 cd ansible
 ansible-playbook site.yml --tags valheim --ask-vault-pass --ask-become-pass
@@ -196,13 +202,15 @@ This installs/starts `valheim-dashboard.service` and
 `valheim-dashboard-broker.service`, updates the controller and timer, and leaves
 the game running/stopped as it was. No website/Caddy changes or public ports.
 
-**After deploying**, open **http://192.168.68.111:8787** directly from your LAN.
+**After deploying**, use **https://lab.mathijs.se/valheim** with local DNS or a
+hosts-file entry. Direct **http://192.168.68.111:8787** remains available on the LAN.
 No SSH tunnel is required. Merging/pulling the code alone does not install or
 start the dashboard. If a host firewall blocks the port, allow TCP 8787 only from
 the configured LAN subnet; do not add a global allow rule.
 
-The application checks the actual TCP client address and ignores forwarding
-headers. Public clients and other subnets receive 403, even with a forged LAN
+The application checks the actual TCP client address; only explicitly configured
+Caddy `/32` peers may provide the HTTPS scheme. It never trusts forwarded client
+addresses. Public clients and other subnets receive 403, even with a forged LAN
 Host/Origin. Do not configure router forwarding or a public Caddy/reverse-proxy
 route: a trusted LAN proxy/NAT can hide the original client's address.
 
@@ -215,8 +223,9 @@ available. Manual backups and updates remain CLI-only.
 
 The web account cannot read game secrets, invoke sudo, or access Docker. Its
 Unix-socket broker allows only typed lifecycle/world operations. The allowed LAN is
-the access boundary: **anyone on that subnet can control the game**. HTTP is
-unencrypted on the LAN; use it only on a trusted network. There is no public
+the access boundary: **anyone on that subnet can control the game**. Browser-to-Caddy
+traffic uses trusted HTTPS; direct backend HTTP is unencrypted and must remain
+on the trusted LAN. There is no public
 login system. Optional SSH access still works with a tunnel whose remote target
 is the configured bind address (e.g. `-L 127.0.0.1:8787:192.168.68.111:8787`).
 

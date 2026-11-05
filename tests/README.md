@@ -8,11 +8,14 @@ python3 -m unittest discover -s tests -v
 ```
 
 For a standalone Compose binary, set `COMPOSE_COMMAND=/path/to/docker-compose`.
-For the Pi-hole Caddy integration check, install Caddy or set
-`CADDY_COMMAND=/path/to/caddy` (otherwise that check is skipped). It validates the
-shipped proxy configuration and exercises its actual peer allowlist on ephemeral
-loopback listeners, including spoofed forwarding headers, with a harmless
-upstream fixture. It never contacts the real Pi-hole or requests certificates.
+For the private-route integration checks, install Caddy with the Cloudflare
+module (`github.com/caddy-dns/cloudflare@v0.2.4`) or set
+`CADDY_COMMAND=/path/to/caddy-cloudflare` (otherwise those checks are skipped).
+OpenSSL is needed for disposable local TLS fixtures. CI downloads a module-enabled
+Caddy build. Tests validate the production DNS-01 configuration, then exercise
+HTTP/HTTPS peer gates and Host/Origin/token/scheme forwarding using ephemeral
+loopback listeners and a harmless upstream fixture. They never contact the real
+Pi-hole, request ACME certificates, modify DNS, or install a trusted CA.
 These Python tests are tightly coupled to Ansible only: temporary provisioning,
 rendered Compose/systemd validation, opt-out, storage/secret handling, and the
 Ansible CLI wrapper. They never provision the real host. Runtime controller and

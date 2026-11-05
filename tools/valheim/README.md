@@ -87,6 +87,8 @@ Old Python runtime code is removed only after the Rust binaries are installed.
 The Home Tools shell redirects `/` to `/valheim`. It includes status/player count,
 start/stop/restart, saved-world discovery, world selection/creation, and confirmed
 deletion. There is no public authentication, backup UI, or extra reverse proxy.
-`--allow-host lan.mathijs.se` explicitly allows that DNS name without relaxing
-the real-peer network allowlist. DNS and port-free routing are separate concerns;
-see [LAN hostname planning](../../docs/home-tools.md).
+`--allow-host lab.mathijs.se` explicitly allows that DNS name without relaxing
+the real-peer network allowlist. `--trusted-proxy 172.18.0.2/32` separately trusts
+that exact private proxy peer and its HTTPS forwarding scheme; Ansible discovers
+these addresses from the configured Caddy container. Forwarded client addresses
+are never trusted. See [private DNS and trusted HTTPS](../../docs/home-tools.md).

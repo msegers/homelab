@@ -172,6 +172,11 @@ manager. For later edits, use `ansible-vault edit host_vars/homelab/vault.yml`.
 
 ## 4. Deploy
 
+The host also enables trusted HTTPS for `lab.mathijs.se` and `pihole.mathijs.se`.
+Before deployment, add the scoped Cloudflare token to the existing Vault using
+the [private HTTPS setup](../docs/home-tools.md#cloudflare-certificate-setup-before-deployment).
+Do not change router forwarding or create public A/AAAA records for these names.
+
 ```bash
 ansible homelab -m ping --ask-vault-pass
 ansible-playbook site.yml --ask-vault-pass
@@ -193,7 +198,7 @@ with `valheim_dashboard_enabled: false`.
 ```bash
 ssh YOUR_SSH_USER@192.168.68.111 'sudo docker compose --project-directory /opt/homelab ps'
 dig @192.168.68.111 example.com
-curl -I http://dns.192.168.68.111.nip.io/admin/
+curl -I --resolve pihole.mathijs.se:443:192.168.68.111 https://pihole.mathijs.se/admin/
 ```
 
 Before switching public website traffic, complete the

@@ -1,0 +1,33 @@
+{$WEBSITE_DOMAIN}, {$WEBSITE_WWW_DOMAIN} {
+	reverse_proxy website:80
+}
+
+{{ 'https' if compose_private_tls_enabled | bool else 'http' }}://{$PIHOLE_DOMAIN} {
+{% if compose_private_tls_enabled | bool %}
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+		resolvers 1.1.1.1 1.0.0.1
+	}
+{% endif %}
+	@lan remote_ip {$PIHOLE_ALLOWED_NETWORKS}
+	handle @lan {
+		reverse_proxy pihole:80
+	}
+	respond "LAN access only" 403
+}
+{% if compose_home_tools_enabled | bool %}
+
+{{ 'https' if compose_private_tls_enabled | bool else 'http' }}://{$HOME_TOOLS_DOMAIN} {
+{% if compose_private_tls_enabled | bool %}
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+		resolvers 1.1.1.1 1.0.0.1
+	}
+{% endif %}
+	@lan remote_ip {$HOME_TOOLS_ALLOWED_NETWORKS}
+	handle @lan {
+		reverse_proxy {$HOME_TOOLS_UPSTREAM}
+	}
+	respond "LAN access only" 403
+}
+{% endif %}
