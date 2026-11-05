@@ -17,12 +17,13 @@ that a particular Valheim version reports its player count accurately.
   Clippy, playbook syntax, rendered systemd verification, and diff checks passed.
 - The homelab host opts into the dashboard and one-hour idle shutdown. The role
   defaults both off. Deploy the updated role, then use the
-  [SSH-tunnel instructions](valheim.md#private-dashboard).
+  [LAN access instructions](valheim.md#private-dashboard). The homelab now binds
+  `192.168.68.111:8787` with a `192.168.68.0/24` TCP client allowlist; no tunnel is required.
 - No public route, Docker socket access for the web account, or frontend framework.
   Backup/update/world-selection stay CLI-only. Existing save/selection/archive
   formats are preserved; Ansible adds the native query address to control settings.
-- Next operator checks: verify dashboard units and the loopback-only listener,
-  open the page through SSH, exercise start/status/stop/restart, and verify other
+- Next operator checks: verify dashboard units and the private-LAN listener,
+  open the page from the LAN, exercise start/status/stop/restart, and verify other
   services stay untouched. Gameplay/player detection still needs real clients;
   disable idle shutdown while validating if not already verified. Backup/restore
   and retirement checks below remain live acceptance tasks, not automated claims.

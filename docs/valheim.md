@@ -124,8 +124,17 @@ adjust ownership, update the variables, reprovision, then start and verify saves
 
 The homelab host settings enable the dashboard; the reusable role defaults it off.
 To opt in on another host, set `valheim_dashboard_enabled: true`. The optional
-`valheim_dashboard_port` defaults to **8787**. The bind address is deliberately
-fixed to **127.0.0.1**, not the LAN/WAN interfaces.
+`valheim_dashboard_port` defaults to **8787**. This host binds to **192.168.68.111**
+and allows clients in **192.168.68.0/24**, configured in host variables:
+
+```yaml
+valheim_dashboard_bind_ip: "{{ compose_bind_ip }}"
+valheim_dashboard_allowed_networks: [192.168.68.0/24]
+```
+
+Change the subnet if your LAN differs. The application refuses wildcard/public
+bind addresses and public/broad client ranges. Reusable defaults remain
+`127.0.0.1` with `127.0.0.0/8` allowed for installations preferring SSH tunnels.
 
 Deploy from the repository root after installing the Rust prerequisites above:
 
@@ -138,16 +147,15 @@ This installs/starts `valheim-dashboard.service` and
 `valheim-dashboard-broker.service`, updates the controller and timer, and leaves
 the game running/stopped as it was. No website/Caddy changes or public ports.
 
-On your laptop, use your inventory's SSH user/address to open a tunnel:
+**After deploying**, open **http://192.168.68.111:8787** directly from your LAN.
+No SSH tunnel is required. Merging/pulling the code alone does not install or
+start the dashboard. If a host firewall blocks the port, allow TCP 8787 only from
+the configured LAN subnet; do not add a global allow rule.
 
-```bash
-ssh -N -L 127.0.0.1:8787:127.0.0.1:8787 YOUR_SSH_USER@192.168.68.111
-```
-
-Keep that terminal open and visit **http://127.0.0.1:8787**. If that local port is
-busy, use `127.0.0.1:8788:127.0.0.1:8787` and browse port 8788 instead.
-An SSH address reachable through Tailscale works too; there is no direct
-Tailscale/public HTTP listener. Do not configure router forwarding or Caddy for it.
+The application checks the actual TCP client address and ignores forwarding
+headers. Public clients and other subnets receive 403, even with a forged LAN
+Host/Origin. Do not configure router forwarding or a public Caddy/reverse-proxy
+route: a trusted LAN proxy/NAT can hide the original client's address.
 
 The page shows container/game status, player count (or unknown), selected world,
 and configured idle policy. Start, stop, and restart reuse the existing controller
@@ -156,9 +164,11 @@ Initial downloads can take minutes. A successful start is not a game-readiness
 guarantee. Backups, updates, and world selection remain CLI-only.
 
 The web account cannot read game secrets, invoke sudo, or access Docker. Its
-Unix-socket broker allows only the four intended operations. SSH is the access
-boundary: local users or anyone with tunnel access can control the game; this
-is not a public login-enabled application.
+Unix-socket broker allows only the four intended operations. The allowed LAN is
+the access boundary: **anyone on that subnet can control the game**. HTTP is
+unencrypted on the LAN; use it only on a trusted network. There is no public
+login system. Optional SSH access still works with a tunnel whose remote target
+is the configured bind address (e.g. `-L 127.0.0.1:8787:192.168.68.111:8787`).
 
 Check on the server:
 
@@ -168,7 +178,7 @@ sudo journalctl -u valheim-dashboard.service -u valheim-dashboard-broker.service
 sudo ss -lntp 'sport = :8787'
 ```
 
-Expect the listener at `127.0.0.1:8787`, never `0.0.0.0` or the LAN IP. Set
+Expect the listener at `192.168.68.111:8787`, never `0.0.0.0` or a public IP. Set
 `valheim_dashboard_enabled: false` and redeploy to stop only the dashboard/helper,
 leaving the game and its idle timer alone. Retirement stops both dashboard units
 before stopping Valheim and preserves all saves/backups.

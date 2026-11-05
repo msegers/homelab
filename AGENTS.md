@@ -16,7 +16,8 @@
 ## Deployment and safety
 
 - Ansible owns installation, configuration, and systemd lifecycle.
-- The Valheim dashboard is private: loopback/SSH tunnel by default. Do not add
+- The Valheim dashboard is private: the homelab host uses its LAN IP with an
+  explicit client subnet allowlist; reusable defaults remain loopback-only. Do not add
   public Caddy routes, public listeners, or router forwarding without approval.
 - Do not expose Docker's socket to a web process. Keep web permissions limited
   to the intended Valheim operations.

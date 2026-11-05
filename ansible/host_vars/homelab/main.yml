@@ -8,3 +8,5 @@ valheim_enabled: true
 valheim_idle_shutdown_enabled: true
 valheim_idle_timeout_seconds: 3600
 valheim_dashboard_enabled: true
+valheim_dashboard_bind_ip: "{{ compose_bind_ip }}"
+valheim_dashboard_allowed_networks: [192.168.68.0/24]

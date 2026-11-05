@@ -10,7 +10,16 @@
       ansible.builtin.assert:
         that:
           - 1024 <= valheim_dashboard_port | int <= 65535
-        fail_msg: Choose an unprivileged dashboard port. The listener is always 127.0.0.1.
+          - valheim_dashboard_bind_ip == '127.0.0.1' or valheim_dashboard_bind_ip in ansible_all_ipv4_addresses
+          - valheim_dashboard_bind_ip is match('^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)')
+          - valheim_dashboard_allowed_networks is sequence and valheim_dashboard_allowed_networks is not string
+          - valheim_dashboard_allowed_networks | length > 0
+        fail_msg: Choose an unprivileged port, an assigned private IPv4/loopback address, and explicit allowed private networks.
+
+    - name: Validate client network argument format
+      ansible.builtin.assert:
+        that: item is match('^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$')
+      loop: "{{ valheim_dashboard_allowed_networks }}"
 
     - name: Create dedicated dashboard group
       ansible.builtin.group:
@@ -46,7 +55,7 @@
         state: "{{ 'restarted' if valheim_dashboard_units.changed or valheim_rust_install.changed else 'started' }}"
       when: not ansible_check_mode
 
-    - name: Enable loopback dashboard
+    - name: Enable private dashboard
       ansible.builtin.systemd_service:
         name: valheim-dashboard.service
         enabled: true

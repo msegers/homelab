@@ -239,13 +239,20 @@ class ProvisionTests(unittest.TestCase):
         defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
         self.assertEqual(defaults["valheim_rust_target"], "x86_64-unknown-linux-musl")
         self.assertFalse(defaults["valheim_dashboard_enabled"])
+        self.assertEqual(defaults["valheim_dashboard_bind_ip"], "127.0.0.1")
+        self.assertEqual(defaults["valheim_dashboard_allowed_networks"], ["127.0.0.0/8"])
+        host = yaml.safe_load((ROOT / "ansible/host_vars/homelab/main.yml").read_text())
+        self.assertEqual(host["valheim_dashboard_bind_ip"], "{{ compose_bind_ip }}")
         self.assertFalse((ROLE / "files/control.py").exists())
 
     def test_dashboard_units_render_with_separate_runtime_user_and_custom_paths(self):
         self.variables["valheim_dashboard_port"] = 9898
+        self.variables["valheim_dashboard_bind_ip"] = "192.168.68.111"
+        self.variables["valheim_dashboard_allowed_networks"] = ["192.168.68.0/24"]
         self.run_role("dashboard_render")
         web = (self.root / "valheim-dashboard.service").read_text()
         self.assertIn("web --port 9898", web)
+        self.assertIn("--bind 192.168.68.111 --allow-network 192.168.68.0/24", web)
         self.assertIn("User=valheim-dashboard", web)
         broker = (self.root / "valheim-dashboard-broker.service").read_text()
         self.assertIn(f"broker --config {self.root}/home/control/config.json", broker)
