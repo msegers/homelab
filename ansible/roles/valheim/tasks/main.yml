@@ -25,3 +25,7 @@
 - name: Configure automatic idle shutdown
   ansible.builtin.import_tasks: idle_timer.yml
   when: valheim_enabled | bool
+
+- name: Configure the private dashboard
+  ansible.builtin.import_tasks: dashboard.yml
+  when: valheim_enabled | bool

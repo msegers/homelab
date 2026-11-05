@@ -1,0 +1,45 @@
+name: Valheim
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+          components: rustfmt, clippy
+      - name: Rust formatting
+        working-directory: tools/valheim
+        run: cargo fmt --check
+      - name: Rust lint and tests
+        working-directory: tools/valheim
+        run: |
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+      - name: Build static deployment binaries
+        working-directory: tools/valheim
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: UI behavior
+        run: node --test tools/valheim/web/app.test.mjs
+      - name: Install Ansible test dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install ansible
+          .venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
+      - name: Provisioning regressions (no live deployment)
+        run: |
+          source .venv/bin/activate
+          docker compose version
+          python3 -m unittest discover -s tests -v
+          cd ansible
+          ansible-playbook -i localhost, site.yml --syntax-check
+          ansible-playbook -i localhost, valheim.yml --syntax-check

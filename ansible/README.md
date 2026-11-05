@@ -68,6 +68,13 @@ Add `--ask-become-pass` if sudo requires a password. Rerun the playbook to apply
 configuration changes. In a new terminal, first run
 `source ~/.venvs/ansible/bin/activate`.
 
+The committed host settings also enable Valheim and its private dashboard. That
+role builds Rust binaries locally: install Rust 1.88+ on your Linux x86_64 control
+machine and run `rustup target add x86_64-unknown-linux-musl` once before deploying.
+See [Valheim setup and dashboard access](../docs/valheim.md#private-dashboard).
+Set `valheim_enabled: false` to retire an installed game, or disable only its UI
+with `valheim_dashboard_enabled: false`.
+
 ## 5. Verify
 
 ```bash

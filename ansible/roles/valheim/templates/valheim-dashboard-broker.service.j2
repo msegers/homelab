@@ -1,0 +1,22 @@
+[Unit]
+Description=Private Valheim control broker (Unix socket only)
+After=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=valheim-dashboard
+RuntimeDirectory=valheim-dashboard
+RuntimeDirectoryMode=0750
+ExecStart=/usr/local/libexec/homelab-valheim/valheim-dashboard broker --config {{ valheim_state_dir }}/config.json
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths={{ valheim_home }} {{ valheim_project_dir }} {{ valheim_state_dir }} {{ valheim_worlds_dir }} {{ valheim_config_dir }} {{ valheim_backups_dir }} {{ valheim_data_dir }}
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

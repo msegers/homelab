@@ -32,3 +32,10 @@ valheim_stop_timeout: 120
 valheim_idle_shutdown_enabled: false
 valheim_idle_timeout_seconds: 3600
 valheim_idle_poll_seconds: 60
+
+# Built on the Ansible controller, not on the game host. Static musl binaries
+# avoid depending on the controller machine's glibc version.
+valheim_rust_target: x86_64-unknown-linux-musl
+valheim_cargo_command: cargo
+valheim_dashboard_enabled: false
+valheim_dashboard_port: 8787
