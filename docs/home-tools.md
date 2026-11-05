@@ -67,10 +67,12 @@ Compose configuration/container environment; Docker/root administrators can
 read it. Container inspection is hidden from Ansible output. Do not publish raw
 `docker inspect` or `docker compose config` output.
 
-Only the private hostnames use DNS-01: Caddy creates temporary public ACME TXT
-records through Cloudflare, without public A/AAAA records or new forwarding.
-Outbound HTTPS and DNS are needed for issuance and renewal. Existing public-site
-certificate configuration and persistent Caddy certificate storage are unchanged.
+With `compose_private_tls_enabled`, both the private hostnames and the public
+website (`mathijs.se` and `www.mathijs.se`) use DNS-01: Caddy creates temporary
+public ACME TXT records through Cloudflare. No public A/AAAA records or new
+forwarding are needed for the private names. Outbound HTTPS and DNS are needed
+for issuance and renewal; inbound HTTP/TLS challenge routing is not required.
+Public website proxy routing and persistent Caddy certificate storage are unchanged.
 Certificates expose these hostnames in public Certificate Transparency logs;
 they do not make the applications public. No private CA installation is needed.
 

@@ -94,18 +94,31 @@ class HomeToolsDnsTests(unittest.TestCase):
     def test_caddy_private_routes_check_real_peer_and_preserve_portless_origin(self):
         self.check_private_routes(tls=False)
 
-    def test_private_tls_uses_scoped_runtime_token_and_leaves_public_site_unchanged(self):
+    def test_cloudflare_tls_covers_public_and_private_hosts_without_changing_routes(self):
         rendered, source = self.render(None, with_caddy=True, compose_home_tools_enabled=True,
                                       compose_private_tls_enabled=True, compose_cloudflare_api_token="test-$literal")
         proxy = rendered["services"]["proxy"]
         self.assertEqual(proxy["environment"]["CF_API_TOKEN"], "test-$$literal")
         self.assertEqual(proxy["build"], {"context": ".", "dockerfile": "Dockerfile.caddy"})
-        self.assertEqual(source.count("dns cloudflare {env.CF_API_TOKEN}"), 2)
+        self.assertEqual(source.count("dns cloudflare {env.CF_API_TOKEN}"), 3)
         self.assertIn("https://{$HOME_TOOLS_DOMAIN}", source)
         self.assertIn("https://{$PIHOLE_DOMAIN}", source)
         self.assertNotIn("test-$literal", source)
-        self.assertTrue(source.startswith("{$WEBSITE_DOMAIN}, {$WEBSITE_WWW_DOMAIN} {\n\treverse_proxy website:80\n}"))
+        website = source.split("\n\n", 1)[0]
+        self.assertTrue(website.startswith("{$WEBSITE_DOMAIN}, {$WEBSITE_WWW_DOMAIN} {\n\ttls {"))
+        self.assertIn("dns cloudflare {env.CF_API_TOKEN}", website)
+        self.assertIn("\treverse_proxy website:80", website)
+        self.assertNotIn("remote_ip", website)
         self.assertEqual((ROLE / "files/caddy.dockerignore").read_text(), "*\n!Dockerfile.caddy\n")
+
+    def test_default_website_keeps_stock_caddy_and_existing_acme_behavior(self):
+        rendered, source = self.render(None, with_caddy=True)
+        self.assertTrue(source.startswith("{$WEBSITE_DOMAIN}, {$WEBSITE_WWW_DOMAIN} {\n\treverse_proxy website:80\n}"))
+        self.assertNotIn("dns cloudflare", source)
+        proxy = rendered["services"]["proxy"]
+        self.assertEqual(proxy["image"], "caddy:2-alpine")
+        self.assertNotIn("build", proxy)
+        self.assertNotIn("CF_API_TOKEN", proxy["environment"])
 
     def test_private_tls_requires_token_without_logging_it(self):
         tasks = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
@@ -145,6 +158,14 @@ class HomeToolsDnsTests(unittest.TestCase):
         self.assertEqual(adapted.returncode, 0, adapted.stderr)
         self.assertIn('"192.168.68.0/24"', adapted.stdout)
         self.assertNotIn("private_ranges", adapted.stdout)
+        if tls:
+            policies = json.loads(adapted.stdout)["apps"]["tls"]["automation"]["policies"]
+            for domain_key in ["WEBSITE_DOMAIN", "WEBSITE_WWW_DOMAIN", "PIHOLE_DOMAIN", "HOME_TOOLS_DOMAIN"]:
+                policy = next(policy for policy in policies if environment[domain_key] in policy.get("subjects", []))
+                for issuer in policy["issuers"]:
+                    self.assertEqual(issuer["module"], "acme")
+                    self.assertEqual(set(issuer["challenges"]), {"dns"})
+                    self.assertEqual(issuer["challenges"]["dns"]["provider"]["name"], "cloudflare")
         requests = []
 
         class Upstream(BaseHTTPRequestHandler):

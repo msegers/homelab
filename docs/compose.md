@@ -25,21 +25,30 @@ hosts file. The homelab now configures `compose_pihole_domain: pihole.mathijs.se
 and its local DNS record; reusable defaults retain the old `nip.io` name. See
 [Pi-hole first use](home-tools.md#pi-hole-first-use) to test without changing
 your router's DNS settings. No live deployment has been performed by these changes.
-Private hostnames use Cloudflare DNS-01 with a scoped Vault token and a custom
+With `compose_private_tls_enabled`, private hostnames and the public website use
+Cloudflare DNS-01 with a scoped Vault token and a custom
 Caddy build; see [private HTTPS setup](home-tools.md#cloudflare-certificate-setup-before-deployment).
-The public website still uses its original ACME validation. The public cutover
-instructions below apply only to that website, not to private hostnames.
+With that option disabled, the public website retains stock Caddy's default
+ACME validation. The public cutover instructions below apply only to that
+website, not to private hostnames.
 
 ## HTTPS and public cutover
 
 1. Point both public website domains at your WAN IP. Check A/AAAA records and
    remove stale IPv6 records; the stack publishes on IPv4. Check any CAA records
    permit Caddy's certificate issuer.
-2. Forward TCP 80/443 to `compose_bind_ip` and allow outbound HTTPS. Caddy uses
-   public ACME validation to obtain and renew certificates. Local hosts entries
-   alone cannot satisfy validation.
-3. Schedule the forwarding switch from the old host. Pre-issuing certificates
-   through DNS validation requires a custom Caddy image with a provider plugin.
+2. For public website traffic, maintain the intended origin address and existing
+   TCP 80/443 forwarding to `compose_bind_ip`. Allow outbound HTTPS and DNS.
+   This host obtains and renews certificates using Cloudflare DNS-01; it does not
+   need inbound HTTP-01 or TLS-ALPN challenges. The custom Caddy build and scoped
+   token are configured by Ansible. Local hosts entries alone do not issue certificates.
+3. If the website uses Cloudflare's proxy (orange cloud), use **Full (strict)**
+   SSL/TLS mode once Caddy has its trusted certificate. Avoid **Flexible**, which
+   sends HTTP to Caddy and can loop against its HTTPS redirect. DNS-01 works with
+   the proxy enabled, but does not fix an incorrect origin IP or unreachable origin
+   (Cloudflare 523). Reusable defaults without DNS-01 still require working inbound
+   ACME challenge routing. Schedule any public cutover separately; no router or
+   Cloudflare edge settings are changed by this playbook.
 4. Deploy, then check certificate issuance for both domains:
 
    ```bash

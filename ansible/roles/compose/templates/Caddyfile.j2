@@ -1,4 +1,10 @@
 {$WEBSITE_DOMAIN}, {$WEBSITE_WWW_DOMAIN} {
+{% if compose_private_tls_enabled | bool %}
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+		resolvers 1.1.1.1 1.0.0.1
+	}
+{% endif %}
 	reverse_proxy website:80
 }
 
