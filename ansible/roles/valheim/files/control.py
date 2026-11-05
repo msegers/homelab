@@ -89,7 +89,8 @@ class Controller:
     def inspect(self):
         result = self.docker("inspect", self.config["container"], check=False)
         if result.returncode:
-            if "No such object" in result.stderr or "No such container" in result.stderr:
+            error = result.stderr.lower()
+            if "no such object" in error or "no such container" in error:
                 return None
             raise ControlError("Docker Engine unavailable")
         info = json.loads(result.stdout)[0]

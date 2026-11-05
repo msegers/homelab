@@ -33,18 +33,19 @@ Replace `YOUR_SSH_USER` and confirm `ansible_host`. Connect once with
 | File | Setting |
 | --- | --- |
 | `inventory.ini` | `ansible_host`: SSH address; this file is gitignored. |
-| `host_vars/elitedesk/main.yml` | `compose_bind_ip`: LAN address for service ports, currently `192.168.68.111`. |
+| `host_vars/homelab/main.yml` | `compose_bind_ip`: LAN address for service ports, currently `192.168.68.111`. |
 | `roles/compose/defaults/main.yml` | Images, domains, timezone, and DNS defaults; override in the host variables. |
 
-Keep the inventory alias `elitedesk` matched to its `host_vars/elitedesk/`
-directory. The SSH address and service bind IP are configured independently.
+Keep the inventory alias `homelab` matched to its `host_vars/homelab/`
+directory. The inventory group is `homelab_hosts` to avoid a host/group name
+collision. The SSH address and service bind IP are configured independently.
 
 ## 3. Add the Pi-hole password
 
 For first-time setup:
 
 ```bash
-ansible-vault create host_vars/elitedesk/vault.yml
+ansible-vault create host_vars/homelab/vault.yml
 ```
 
 Enter this YAML in the editor with your chosen Pi-hole password:
@@ -54,7 +55,7 @@ vault_compose_pihole_password: 'YOUR_PIHOLE_PASSWORD'
 ```
 
 Commit the encrypted `vault.yml`; keep the Vault password in your password
-manager. For later edits, use `ansible-vault edit host_vars/elitedesk/vault.yml`.
+manager. For later edits, use `ansible-vault edit host_vars/homelab/vault.yml`.
 
 ## 4. Deploy
 

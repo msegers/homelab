@@ -77,7 +77,15 @@
 - name: Check that the account has no sudo authorization
   ansible.builtin.command:
     argv: [sudo, -n, -l, -U, "{{ valheim_user }}"]
+  environment:
+    LC_ALL: C
+    LANGUAGE: C
   register: valheim_sudo_check
   changed_when: false
-  failed_when: valheim_sudo_check.rc != 1
+  # sudo versions differ on the exit status for an explicitly denied listing.
+  # Require the denial itself; errors or any listed permissions must fail closed.
+  failed_when: >-
+    valheim_sudo_check.rc not in [0, 1] or
+    not ((valheim_sudo_check.stdout ~ '\n' ~ valheim_sudo_check.stderr) | trim
+    is match('^User ' ~ valheim_user ~ ' is not allowed to run sudo on [^\r\n]+[.]$'))
   when: not ansible_check_mode

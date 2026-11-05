@@ -31,4 +31,4 @@ if [[ -z ${ANSIBLE_VAULT_PASSWORD_FILE:-} && -z ${ANSIBLE_VAULT_IDENTITY_LIST:-}
     esac
   done
 fi
-exec ansible-playbook valheim.yml --extra-vars "$extra" "${vault_args[@]}" "$@"
+exec ansible-playbook valheim.yml --extra-vars "$extra" --ask-become-pass "${vault_args[@]}" "$@"

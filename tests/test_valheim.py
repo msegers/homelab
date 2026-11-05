@@ -48,12 +48,15 @@ class ProvisionTests(unittest.TestCase):
     def run_role(self, tasks_from="provision", expect_success=True):
         variables = self.variables
         tasks = [{"ansible.builtin.include_role": {"name": "valheim", "tasks_from": tasks_from}}]
-        if tasks_from in ["provision", "account_preflight"]:
+        if tasks_from in ["provision", "account_preflight", "account_sudo"]:
             variables = yaml.safe_load((ROLE / "defaults/main.yml").read_text()) | self.variables
-            source = "account.yml" if tasks_from == "account_preflight" else "provision.yml"
+            source = "account.yml" if tasks_from.startswith("account_") else "provision.yml"
             tasks = yaml.safe_load((ROLE / "tasks" / source).read_text())
             if tasks_from == "account_preflight":
                 tasks = [task for task in tasks if "ansible.builtin.assert" in task]
+            if tasks_from == "account_sudo":
+                tasks = [task for task in tasks if task.get("register") == "valheim_sudo_check"]
+                tasks[0]["ansible.builtin.command"]["argv"][0] = str(self.root / "sudo")
             # Exercise the production rendering without requiring root on the
             # test machine. Root ownership policy is asserted separately below.
             for task in tasks:
@@ -80,6 +83,30 @@ class ProvisionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         else:
             self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    def test_sudo_check_requires_explicit_denial_regardless_of_exit_status(self):
+        denial = "User valheim-game is not allowed to run sudo on homelab.\n"
+        cases = [
+            (0, denial, "", True),
+            (1, denial, "", True),
+            (1, "", denial, True),
+            (0, "User valheim-game may run the following commands on homelab:\n    (ALL) ALL\n", "", False),
+            (1, "", "sudo: policy plugin failed\n", False),
+            (1, "", "", False),
+            (2, denial, "", False),
+            (0, denial + "    (ALL) ALL\n", "", False),
+        ]
+        for rc, stdout, stderr, success in cases:
+            with self.subTest(rc=rc, stdout=stdout, stderr=stderr):
+                fake = self.root / "sudo"
+                fake.write_text(
+                    f"#!{sys.executable}\nimport os, sys\n"
+                    "assert os.environ['LC_ALL'] == 'C'\n"
+                    "assert os.environ['LANGUAGE'] == 'C'\n"
+                    f"sys.stdout.write({stdout!r})\nsys.stderr.write({stderr!r})\nsys.exit({rc})\n"
+                )
+                fake.chmod(0o700)
+                self.run_role("account_sudo", expect_success=success)
 
     def compose(self, *args):
         command = shlex.split(os.environ.get("COMPOSE_COMMAND", "docker compose"))
@@ -281,6 +308,26 @@ class ControllerTests(unittest.TestCase):
             Path(self.config[name]).mkdir()
         (Path(self.config["project_dir"]) / "docker-compose.yml").write_text("services: {}\n")
         self.controller = FakeController(self.config)
+
+    def test_inspect_recognizes_missing_container_across_docker_versions(self):
+        for message in [
+            "Error: No such object: valheim-server",
+            "error: no such object: valheim-server",
+            "Error response from daemon: No such container: valheim-server",
+            "error: no such container: valheim-server",
+        ]:
+            with self.subTest(message=message), patch.object(
+                    self.controller, "docker", return_value=SimpleNamespace(
+                        returncode=1, stdout="[]", stderr=message)):
+                self.assertIsNone(control.Controller.inspect(self.controller))
+
+    def test_inspect_does_not_treat_daemon_errors_as_missing_container(self):
+        for message in ["Cannot connect to the Docker daemon", "permission denied", ""]:
+            with self.subTest(message=message), patch.object(
+                    self.controller, "docker", return_value=SimpleNamespace(
+                        returncode=1, stdout="", stderr=message)):
+                with self.assertRaisesRegex(control.ControlError, "Docker Engine unavailable"):
+                    control.Controller.inspect(self.controller)
 
     def tick(self, now):
         with patch.object(control.time, "monotonic", return_value=now), \
@@ -514,13 +561,14 @@ class WrapperTests(unittest.TestCase):
                               text=True, capture_output=True)
 
     def test_uses_existing_ansible_directory_and_forwards_options(self):
-        result = self.invoke("world", "NewWorld", "--limit", "elitedesk")
+        result = self.invoke("world", "NewWorld", "--limit", "homelab")
         self.assertEqual(result.returncode, 0, result.stderr)
         call = json.loads(result.stdout)
         self.assertEqual(call["cwd"], str(ROOT / "ansible"))
         self.assertIn("valheim_action=world valheim_selected_world=NewWorld", call["args"])
+        self.assertIn("--ask-become-pass", call["args"])
         self.assertIn("--ask-vault-pass", call["args"])
-        self.assertEqual(call["args"][-2:], ["--limit", "elitedesk"])
+        self.assertEqual(call["args"][-2:], ["--limit", "homelab"])
 
     def test_standard_vault_password_file_avoids_extra_prompt(self):
         result = self.invoke("status", password_file=True)

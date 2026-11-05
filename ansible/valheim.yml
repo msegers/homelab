@@ -1,6 +1,6 @@
 ---
 - name: Control the optional Valheim server
-  hosts: homelab
+  hosts: homelab_hosts
   become: true
   gather_facts: false
   tasks:

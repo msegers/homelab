@@ -7,5 +7,10 @@ terraform.tfstate.backup
 
 # Ansible
 ansible/inventory.ini
+ansible/host_vars/**/*.local.yml
 .ansible/
 *.retry
+
+# Python-generated files
+__pycache__/
+*.py[cod]

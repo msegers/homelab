@@ -6,7 +6,7 @@ empty, once player detection has passed the [live acceptance test](valheim-accep
 
 ## Enable and choose storage
 
-Add to `ansible/host_vars/elitedesk/main.yml`:
+Add to `ansible/host_vars/homelab/main.yml`:
 
 ```yaml
 valheim_enabled: true
@@ -36,9 +36,13 @@ Add `vault_valheim_server_password: 'YOUR_GAME_PASSWORD'` (5+ characters) using:
 
 ```bash
 cd ansible
-ansible-vault edit host_vars/elitedesk/vault.yml
+ansible-vault edit host_vars/homelab/vault.yml
 ansible-playbook site.yml --tags valheim --ask-vault-pass
 ```
+
+Normally, deploy the entire homelab with
+`ansible-playbook site.yml --ask-vault-pass --ask-become-pass` from `ansible/`.
+The `--tags valheim` example above is an optional way to apply only Valheim changes.
 
 Provisioning leaves the game stopped. The normal playbook includes this role
 when enabled; the default is disabled. Other settings live in
@@ -59,11 +63,13 @@ From the repository root, with Ansible available:
 ```
 
 The script uses your **gitignored `ansible/inventory.ini`** and normal host
-variables/Vault. It prompts for the Vault password unless you configure Ansible's
-standard password-file/identity options. Extra Ansible flags are forwarded:
+variables/Vault. It prompts for the privilege-escalation password (root's password
+when the inventory uses `ansible_become_method=su`) and for the Vault password
+unless you configure Ansible's standard password-file/identity options. Extra
+Ansible flags are forwarded:
 
 ```bash
-./scripts/valheim start --limit elitedesk --ask-become-pass
+./scripts/valheim start --limit homelab
 ```
 
 First start downloads the image/game; allow several minutes. Join
