@@ -3,8 +3,8 @@
 Valheim uses the EliteDesk's existing Docker Engine, in its own Compose project.
 Scripts control it over SSH. An opt-in systemd timer can stop it after an hour
 empty, once player detection has passed the [live acceptance test](valheim-acceptance.md).
-The [private dashboard](#private-dashboard) provides status and start/stop/restart
-buttons. Both services and the CLI controller are Rust, with source in
+The [private dashboard](#private-dashboard) provides status, start/stop/restart,
+and world management at `/valheim` inside Home Tools. Both services and the CLI controller are Rust, with source in
 [`tools/valheim/`](../tools/valheim/).
 
 ## Enable and choose storage
@@ -97,7 +97,7 @@ First start downloads the image/game; allow several minutes. Join
 `192.168.68.111:2456`. Forward only the configured UDP game ports for Internet
 players; management uses SSH/LAN/Tailscale.
 
-`world NAME` backs up before switching, preserves whether the server was running,
+`world NAME` follows the configured pre-change backup policy, preserves whether the server was running,
 and generates a new world on its next start. World selection survives Ansible
 reruns. Configuration changes take effect on an explicit start/restart; Ansible
 does not start or restart the game during provisioning. The server stays stopped
@@ -122,6 +122,55 @@ adjust ownership, update the variables, reprovision, then start and verify saves
 
 ## Private dashboard
 
+### Worlds and backup policy
+
+`/` redirects to `/valheim`. The world list discovers save directories and flat
+`.db`/`.fwl` saves, plus the selected world (which may not have generated yet).
+The role's bootstrap default is `Homelab`; `Meadows` above is an example. Persisted
+`world.json` takes precedence and survives Ansible reruns.
+
+Select an existing world or enter a new save name (not a seed). Saves coexist;
+switching does not rename or overwrite the previous world. A running server is
+cleanly stopped and resumed; a stopped server remains stopped until Start is
+clicked. Switching requires confirmation because players may be disconnected.
+
+Deletion requires typing the exact name, rejects the selected/running world, and
+removes only its exact save directory and/or primary `.db`/`.fwl` files. Symlink
+targets and native `_backup_` world names are refused. Other worlds, native backup
+files/directories, `.old` files and the backup destination are not deleted. A
+running server is briefly stopped for consistency. Deletion refuses a save path
+overlapping the backup destination, so it cannot remove its own recovery archive.
+If a world directory contains `_backup_` or `.old` entries, deletion is refused;
+preserve those backups outside the primary world directory before deleting it.
+
+There are three independent backup mechanisms:
+
+- **Docker image's scheduled worker:** `valheim_backups_enabled` controls only
+  the image's `BACKUPS` setting. This host keeps it **`false`** until NAS storage
+  is ready, avoiding scheduled image backups on the SSD.
+- **Controller safety archives:** `valheim_pre_change_backups` independently
+  defaults to **`true`**, and is explicitly enabled on this host. It controls
+  backups before world switches, not scheduled backups. Manual CLI backups remain
+  available. **Deletion always requires a successfully completed archive**, even
+  if this flag is false. An archive failure aborts deletion before touching any
+  world save; existing backups and selection remain unchanged.
+- **Valheim's native automatic backups:** stay enabled using the game's defaults.
+  No `-backups 0` or other native backup-disabling arguments are set. These rolling
+  world backups are separate from the Docker image's scheduled worker.
+
+Deletion archives contain the complete saves, configuration, Compose file and
+selected-world metadata in `valheim_backups_dir`, with private permissions. The
+archive must be finished, synced and published successfully before removal. It
+includes the deleted world's data for recovery, not just the selected world.
+For now these safety archives use the existing local backup directory; move
+`valheim_backups_dir` to the NAS and configure `valheim_required_mounts` when it
+is ready. Changing the image's scheduled-backup setting takes effect on the next
+game start/recreation, not by Ansible restarting the game.
+
+For port-free trusted HTTPS and DNS setup, see [Home Tools](home-tools.md).
+
+### Installation and access
+
 The homelab host settings enable the dashboard; the reusable role defaults it off.
 To opt in on another host, set `valheim_dashboard_enabled: true`. The optional
 `valheim_dashboard_port` defaults to **8787**. This host binds to **192.168.68.111**
@@ -138,6 +187,12 @@ bind addresses and public/broad client ranges. Reusable defaults remain
 
 Deploy from the repository root after installing the Rust prerequisites above:
 
+For the configured homelab, first deploy the Compose role through `site.yml`
+after the [Cloudflare Vault setup](home-tools.md#cloudflare-certificate-setup-before-deployment).
+Dashboard provisioning inspects the configured running Caddy container and
+trusts only its private `/32` addresses. The Valheim-only command below requires
+that proxy to exist already; it does not deploy Caddy.
+
 ```bash
 cd ansible
 ansible-playbook site.yml --tags valheim --ask-vault-pass --ask-become-pass
@@ -147,13 +202,15 @@ This installs/starts `valheim-dashboard.service` and
 `valheim-dashboard-broker.service`, updates the controller and timer, and leaves
 the game running/stopped as it was. No website/Caddy changes or public ports.
 
-**After deploying**, open **http://192.168.68.111:8787** directly from your LAN.
+**After deploying**, use **https://lab.mathijs.se/valheim** with local DNS or a
+hosts-file entry. Direct **http://192.168.68.111:8787** remains available on the LAN.
 No SSH tunnel is required. Merging/pulling the code alone does not install or
 start the dashboard. If a host firewall blocks the port, allow TCP 8787 only from
 the configured LAN subnet; do not add a global allow rule.
 
-The application checks the actual TCP client address and ignores forwarding
-headers. Public clients and other subnets receive 403, even with a forged LAN
+The application checks the actual TCP client address; only explicitly configured
+Caddy `/32` peers may provide the HTTPS scheme. It never trusts forwarded client
+addresses. Public clients and other subnets receive 403, even with a forged LAN
 Host/Origin. Do not configure router forwarding or a public Caddy/reverse-proxy
 route: a trusted LAN proxy/NAT can hide the original client's address.
 
@@ -161,12 +218,14 @@ The page shows container/game status, player count (or unknown), selected world,
 and configured idle policy. Start, stop, and restart reuse the existing controller
 and lock. Stop/restart require confirmation; controls are disabled during work.
 Initial downloads can take minutes. A successful start is not a game-readiness
-guarantee. Backups, updates, and world selection remain CLI-only.
+guarantee. World listing, selection/creation and confirmed deletion are also
+available. Manual backups and updates remain CLI-only.
 
 The web account cannot read game secrets, invoke sudo, or access Docker. Its
-Unix-socket broker allows only the four intended operations. The allowed LAN is
-the access boundary: **anyone on that subnet can control the game**. HTTP is
-unencrypted on the LAN; use it only on a trusted network. There is no public
+Unix-socket broker allows only typed lifecycle/world operations. The allowed LAN is
+the access boundary: **anyone on that subnet can control the game**. Browser-to-Caddy
+traffic uses trusted HTTPS; direct backend HTTP is unencrypted and must remain
+on the trusted LAN. There is no public
 login system. Optional SSH access still works with a tunnel whose remote target
 is the configured bind address (e.g. `-L 127.0.0.1:8787:192.168.68.111:8787`).
 
@@ -234,8 +293,10 @@ fails, the error includes the saved archive path. A failed restart/resume return
 an error, never a success message. Check `status`/logs before assuming it is up;
 container startup is separate from game initialization/download readiness.
 
-The game image also keeps hourly world backups while recently active, capped at
-48 copies/14 days. Those backups run while the game container is running.
+When `valheim_backups_enabled` is true, the game image also keeps hourly world
+backups while recently active, capped at 48 copies/14 days. Those backups run
+while the game container is running. This host currently disables them until
+NAS storage is ready.
 
 `update` pulls the configured, digest-pinned image and recreates the game only
 if already running. Steam game binaries update on startup. To change the image

@@ -8,18 +8,27 @@ Deploy using the [Ansible setup guide](../ansible/README.md). The stack lives in
 | Service | Address |
 | --- | --- |
 | Website | `https://mathijs.se` and `https://www.mathijs.se` |
-| Pi-hole admin | `http://dns.192.168.68.111.nip.io/admin/` |
+| Pi-hole admin (LAN only, after deployment/local DNS setup) | `https://pihole.mathijs.se/admin/` |
+| Home Tools (LAN only) | `https://lab.mathijs.se/valheim` |
 | Pi-hole DNS | `192.168.68.111:53` (TCP and UDP) |
 
 Ports bind to `compose_bind_ip` in the host variables. Caddy redirects website
-HTTP to HTTPS and restricts Pi-hole admin to private source addresses. Use the
+HTTP to HTTPS and restricts Pi-hole admin to the explicit
+`compose_pihole_allowed_networks` TCP-peer allowlist (`192.168.68.0/24` for this
+host; loopback-only in reusable defaults). Forwarding headers are not trusted. Use the
 admin interface over a trusted LAN or SSH tunnel, and keep DNS port 53 LAN-only.
 Review router forwarding and Docker-aware firewall rules, especially if another
 proxy rewrites client addresses.
 
 For LAN testing, point the website domains at the bind IP using local DNS or a
-hosts file. If your resolver blocks `nip.io`, configure a local Pi-hole hostname
-and set `compose_pihole_domain` accordingly.
+hosts file. The homelab now configures `compose_pihole_domain: pihole.mathijs.se`
+and its local DNS record; reusable defaults retain the old `nip.io` name. See
+[Pi-hole first use](home-tools.md#pi-hole-first-use) to test without changing
+your router's DNS settings. No live deployment has been performed by these changes.
+Private hostnames use Cloudflare DNS-01 with a scoped Vault token and a custom
+Caddy build; see [private HTTPS setup](home-tools.md#cloudflare-certificate-setup-before-deployment).
+The public website still uses its original ACME validation. The public cutover
+instructions below apply only to that website, not to private hostnames.
 
 ## HTTPS and public cutover
 
@@ -78,7 +87,7 @@ printf '%s' "$GHCR_TOKEN" | sudo docker login ghcr.io -u YOUR_GITHUB_USER --pass
 - Back up Pi-hole settings with Teleporter. Check v6 import compatibility when
   restoring settings from an older installation; DHCP needs a separate plan.
 - Protect backups of named volumes, encrypted host variables, and the generated
-  Compose file, which contains the Pi-hole password. Preserve volumes when
+Compose file, which contains the Pi-hole password and Cloudflare token. Preserve volumes when
   stopping the stack: `docker compose down -v` deletes them.
 - Verify DNS and restored settings before pointing LAN clients at the new IP.
 - Keep the old host for rollback until migration is verified, then retire it

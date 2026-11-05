@@ -9,8 +9,9 @@
   </head>
   <body>
     <main>
+      <nav aria-label="Home tools"><a href="/">Home Tools</a><a href="/valheim" aria-current="page">Valheim</a></nav>
       <header>
-        <p class="eyebrow">HOMELAB / PRIVATE CONTROLS</p>
+        <p class="eyebrow">HOME TOOLS / PRIVATE CONTROLS</p>
         <h1>Valheim</h1>
         <p class="subtitle">Your world, when you need it.</p>
       </header>
@@ -20,6 +21,7 @@
           <div><dt>Game process</dt><dd id="game">—</dd></div>
           <div><dt>Players online</dt><dd id="players">—</dd></div>
           <div><dt>Selected world</dt><dd id="world">—</dd></div>
+          <div><dt>Running world</dt><dd id="running-world">—</dd></div>
           <div><dt>Idle shutdown</dt><dd id="idle">—</dd></div>
         </dl>
         <div class="actions" aria-label="Server controls">
@@ -28,6 +30,22 @@
           <button data-action="restart" disabled>Restart</button>
         </div>
         <p id="message" role="status" aria-live="polite">Loading status…</p>
+      </section>
+      <section aria-label="World management">
+        <h2>Worlds</h2>
+        <p>Switch to a saved world, or enter a new name. New worlds generate on start; switching does not rename or overwrite other worlds.</p>
+        <p id="backup-policy">Checking backup policy…</p>
+        <label for="saved-world">Saved worlds (including the current selection)</label>
+        <select id="saved-world" disabled></select>
+        <div class="actions">
+          <button id="select-world" disabled>Use selected world</button>
+          <button id="delete-world" class="danger" disabled>Delete selected world…</button>
+        </div>
+        <label for="new-world">New world name</label>
+        <input id="new-world" maxlength="128" pattern="[A-Za-z0-9_][A-Za-z0-9_-]*" placeholder="e.g. Meadows" autocomplete="off" disabled>
+        <p>Letters, numbers, underscores and hyphens; up to 128 characters. This is a save name, not a seed.</p>
+        <button id="create-world" disabled>Use new world</button>
+        <p>Switching or deleting while running disconnects players and briefly stops the server. Delete is unavailable for the selected or running world. Existing backup files are preserved.</p>
       </section>
       <footer>
         Status refreshes every 15 seconds. First startup can take several minutes.

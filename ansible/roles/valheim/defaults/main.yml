@@ -13,6 +13,10 @@ valheim_group: valheim-game
 valheim_config_dir: "{{ valheim_home }}/config"
 valheim_worlds_dir: "{{ valheim_home }}/saves"
 valheim_backups_dir: "{{ valheim_home }}/backups"
+# Docker image's scheduled backups only; native game backups stay enabled.
+valheim_backups_enabled: true
+# Independent policy for world switches. Deletion always archives first.
+valheim_pre_change_backups: true
 valheim_data_dir: "{{ valheim_home }}/server"
 valheim_state_dir: "{{ valheim_home }}/control"
 valheim_required_mounts: []
@@ -41,3 +45,6 @@ valheim_dashboard_enabled: false
 valheim_dashboard_port: 8787
 valheim_dashboard_bind_ip: 127.0.0.1
 valheim_dashboard_allowed_networks: [127.0.0.0/8]
+valheim_dashboard_allowed_hosts: []
+# Empty disables proxy discovery; reusable defaults remain loopback-only.
+valheim_dashboard_proxy_container: ""

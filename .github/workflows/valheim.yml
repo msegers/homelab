@@ -36,8 +36,12 @@ jobs:
           .venv/bin/pip install ansible
           .venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
       - name: Provisioning regressions (no live deployment)
+        env:
+          CADDY_COMMAND: /tmp/caddy-cloudflare
         run: |
           source .venv/bin/activate
+          curl --fail --location --retry 3 'https://caddyserver.com/api/download?os=linux&arch=amd64&p=github.com%2Fcaddy-dns%2Fcloudflare%40v0.2.4' -o "$CADDY_COMMAND"
+          chmod +x "$CADDY_COMMAND"
           docker compose version
           python3 -m unittest discover -s tests -v
           cd ansible

@@ -10,7 +10,13 @@ main { max-width: 680px; margin: 8vh auto; padding: 24px; }
 .eyebrow { color: #9eada3; font-size: .72rem; letter-spacing: .16em; }
 h1 { color: #e7cf9b; font-size: clamp(2.5rem, 8vw, 4rem); margin: 8px 0; }
 .subtitle { color: #adbbb2; margin: 0 0 32px; }
-section { padding: 28px; border: 1px solid #3b4940; border-radius: 16px; background: #202c25; }
+section { padding: 28px; margin-bottom: 20px; border: 1px solid #3b4940; border-radius: 16px; background: #202c25; }
+nav { display: flex; gap: 24px; margin-bottom: 32px; }
+a { color: #e7cf9b; }
+label { display: block; margin: 20px 0 8px; }
+input, select { width: 100%; padding: 12px; margin-bottom: 16px; font: inherit; color: inherit; background: #141c19; border: 1px solid #627668; border-radius: 8px; }
+p { line-height: 1.5; }
+.danger { border-color: #d99585; }
 .heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 h2 { font-size: 1.2rem; margin: 0; }
 .badge { font-size: .85rem; border: 1px solid #627668; border-radius: 20px; padding: 5px 12px; }

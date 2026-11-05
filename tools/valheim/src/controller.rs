@@ -23,12 +23,18 @@ pub struct Config {
     pub worlds_dir: PathBuf,
     pub config_dir: PathBuf,
     pub backups_dir: PathBuf,
+    #[serde(default = "backups_enabled")]
+    pub pre_change_backups: bool,
     pub state_dir: PathBuf,
     pub stop_timeout: u64,
     pub idle_enabled: bool,
     pub idle_timeout: u64,
     pub poll_seconds: u64,
     pub query_address: SocketAddr,
+}
+
+fn backups_enabled() -> bool {
+    true
 }
 
 impl Config {
@@ -60,6 +66,7 @@ pub struct Container {
 
 pub fn valid_world(name: &str) -> bool {
     !name.is_empty()
+        && name.len() <= 128
         && name.bytes().enumerate().all(|(index, byte)| {
             byte.is_ascii_alphanumeric() || byte == b'_' || (index > 0 && byte == b'-')
         })
@@ -175,6 +182,7 @@ impl<E: Engine> Controller<E> {
         let mut result = json!({"running": info.as_ref().is_some_and(|i| i.running),
             "selected_world": self.world()?, "idle_enabled": self.config.idle_enabled,
             "idle_timeout_seconds": self.config.idle_timeout});
+        result["pre_change_backups"] = self.config.pre_change_backups.into();
         if let Some(info) = info.filter(|i| i.running) {
             result["game_state"] = self
                 .engine
@@ -240,15 +248,107 @@ impl<E: Engine> Controller<E> {
             valid_world(name),
             "World names use letters, numbers, underscores, and hyphens"
         );
+        if name == self.world()? {
+            return Ok(format!("World {name} is already selected"));
+        }
         self.while_stopped("World switch", || {
-            let backup = self.archive()?;
+            let backup = self.pre_change_backup()?;
             save_json(
                 &self.config.state_dir.join("world.json"),
                 &json!({"world": name}),
             )?;
             self.reset_idle()?;
             Ok(format!(
-                "Selected world {name}; backup: {backup}; new worlds generate on start"
+                "Selected world {name}; {backup}; new worlds generate on start"
+            ))
+        })
+    }
+
+    fn pre_change_backup(&self) -> Result<String> {
+        if self.config.pre_change_backups {
+            Ok(format!("backup: {}", self.archive()?))
+        } else {
+            Ok("automatic pre-change backup disabled".into())
+        }
+    }
+
+    /// The caller holds control.lock. Never remove the selected or live world.
+    pub fn delete_world(&self, name: &str) -> Result<String> {
+        ensure!(valid_world(name), "Invalid world name");
+        ensure!(
+            !name.contains("_backup_"),
+            "Refusing to delete a native world backup"
+        );
+        ensure!(name != self.world()?, "Cannot delete the selected world");
+        if let Some(info) = self
+            .engine
+            .inspect()?
+            .filter(|info| info.running || info.restarting)
+        {
+            let live = info
+                .env
+                .get("WORLD_NAME")
+                .context("Cannot determine running world")?;
+            ensure!(live != name, "Cannot delete the running world");
+        }
+        // Exact primary-save paths only. Never remove prefix matches or backups.
+        let mut paths = Vec::new();
+        for suffix in ["", ".db", ".fwl"] {
+            let path = self.config.worlds_dir.join(format!("{name}{suffix}"));
+            match fs::symlink_metadata(&path) {
+                Ok(metadata) => {
+                    ensure!(
+                        !metadata.file_type().is_symlink(),
+                        "Refusing symlink world saves"
+                    );
+                    ensure!(
+                        if suffix.is_empty() {
+                            metadata.is_dir()
+                        } else {
+                            metadata.is_file()
+                        },
+                        "Unexpected world save type"
+                    );
+                    paths.push(path);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                Err(error) => return Err(error.into()),
+            }
+        }
+        ensure!(!paths.is_empty(), "World not found");
+        self.while_stopped("World deletion", || {
+            // Never delete the archive destination along with the world, even
+            // with hand-edited settings that bypass Ansible's storage checks.
+            let destination = fs::canonicalize(&self.config.backups_dir)?;
+            for path in &paths {
+                let target = fs::canonicalize(path)?;
+                ensure!(
+                    !destination.starts_with(&target) && !target.starts_with(&destination),
+                    "World save overlaps the backup destination; refusing deletion"
+                );
+                if path.is_dir() {
+                    for entry in walkdir::WalkDir::new(path).follow_links(false) {
+                        let entry = entry?;
+                        let filename = entry.file_name().to_string_lossy();
+                        ensure!(
+                            !filename.contains("_backup_") && !filename.ends_with(".old"),
+                            "World contains backup files; preserve them outside the world directory before deleting"
+                        );
+                    }
+                }
+            }
+            // Mandatory, regardless of the optional world-switch backup flag.
+            // Publication/sync must succeed before any save is removed.
+            let backup = self.archive()?;
+            for path in paths {
+                if path.is_dir() {
+                    fs::remove_dir_all(path)?;
+                } else {
+                    fs::remove_file(path)?;
+                }
+            }
+            Ok(format!(
+                "Deleted world {name}; backup: {backup}; existing backups preserved"
             ))
         })
     }
@@ -261,12 +361,15 @@ impl<E: Engine> Controller<E> {
             let path = entry.path();
             let name = if entry.file_type()?.is_dir() {
                 path.file_name()
-            } else if path.extension().is_some_and(|e| e == "fwl") {
+            } else if entry.file_type()?.is_file()
+                && path.extension().is_some_and(|e| e == "fwl" || e == "db")
+            {
                 path.file_stem()
             } else {
                 None
             };
             if let Some(name) = name.and_then(|n| n.to_str())
+                && valid_world(name)
                 && !backup.is_match(name)
             {
                 names.insert(name.to_owned());
@@ -363,7 +466,7 @@ impl<E: Engine> Controller<E> {
 
     pub fn run(&self, action: &str, world: Option<&str>) -> Result<String> {
         ensure!(
-            (action == "world") == world.is_some(),
+            matches!(action, "world" | "delete-world") == world.is_some(),
             "Supply a world name only with the world action"
         );
         let lock = OpenOptions::new()
@@ -396,6 +499,7 @@ impl<E: Engine> Controller<E> {
             "restart" => self.restart(),
             "backup" => self.backup(),
             "world" => self.select_world(world.context("Missing world")?),
+            "delete-world" => self.delete_world(world.context("Missing world")?),
             "worlds" => self.worlds(),
             "update" => {
                 let running = self.engine.inspect()?.is_some_and(|i| i.running);

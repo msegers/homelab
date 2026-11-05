@@ -44,6 +44,17 @@ class ProvisionTests(unittest.TestCase):
                 "src": str(ROLE / "templates" / "{{ item }}.j2"),
                 "dest": str(self.root / "{{ item }}"),
             }, "loop": ["valheim-dashboard.service", "valheim-dashboard-broker.service", "valheim-idle.service"]}]
+        if tasks_from == "dashboard_proxy":
+            variables = yaml.safe_load((ROLE / "defaults/main.yml").read_text()) | self.variables
+            tasks = yaml.safe_load((ROLE / "tasks/dashboard_proxy.yml").read_text())
+            inspection = tasks[1]["block"][0]
+            self.assertTrue(inspection["no_log"])
+            self.assertEqual(inspection["community.docker.docker_container_info"]["name"], "{{ valheim_dashboard_proxy_container }}")
+            tasks[1]["block"][0] = {"ansible.builtin.set_fact": {
+                "valheim_dashboard_proxy_info": variables.get("proxy_fixture", {})}}
+            tasks.append({"ansible.builtin.template": {
+                "src": str(ROLE / "templates/valheim-dashboard.service.j2"),
+                "dest": str(self.root / "valheim-dashboard.service")}})
         if tasks_from in ["provision", "account_preflight", "account_sudo"]:
             variables = yaml.safe_load((ROLE / "defaults/main.yml").read_text()) | self.variables
             source = "account.yml" if tasks_from.startswith("account_") else "provision.yml"
@@ -80,6 +91,31 @@ class ProvisionTests(unittest.TestCase):
     def config(self):
         return json.loads((self.root / "home/control/config.json").read_text())
 
+    def test_dashboard_proxy_discovery_authorizes_exact_private_peers_only(self):
+        self.variables.update(valheim_dashboard_proxy_container="homelab-proxy-1", proxy_fixture={
+            "exists": True, "container": {"State": {"Running": True}, "NetworkSettings": {"Networks": {
+                "private": {"IPAddress": "172.18.0.2"}, "other": {"IPAddress": "10.9.0.3"},
+                "public": {"IPAddress": "8.8.8.8"}, "ipv6_only": {"IPAddress": ""}}}}})
+        self.run_role("dashboard_proxy")
+        unit = (self.root / "valheim-dashboard.service").read_text()
+        self.assertIn("--trusted-proxy 172.18.0.2/32", unit)
+        self.assertIn("--trusted-proxy 10.9.0.3/32", unit)
+        self.assertNotIn("8.8.8.8", unit)
+        self.assertNotIn("--allow-network 172.18", unit)
+        self.variables["valheim_dashboard_proxy_container"] = ""
+        self.run_role("dashboard_proxy")
+        self.assertNotIn("--trusted-proxy", (self.root / "valheim-dashboard.service").read_text())
+
+    def test_dashboard_proxy_discovery_fails_closed(self):
+        self.variables["valheim_dashboard_proxy_container"] = "homelab-proxy-1"
+        for fixture in [{"exists": False},
+                        {"exists": True, "container": {"State": {"Running": False}}},
+                        {"exists": True, "container": {"State": {"Running": True}, "NetworkSettings": {
+                            "Networks": {"public": {"IPAddress": "8.8.8.8"}}}}}]:
+            with self.subTest(fixture=fixture):
+                self.variables["proxy_fixture"] = fixture
+                self.run_role("dashboard_proxy", expect_success=False)
+
     def test_sudo_check_requires_explicit_denial_regardless_of_exit_status(self):
         denial = "User valheim-game is not allowed to run sudo on homelab.\n"
         cases = [(0, denial, "", True), (1, denial, "", True), (1, "", denial, True),
@@ -114,6 +150,7 @@ class ProvisionTests(unittest.TestCase):
     def test_selected_world_and_idle_state_survive_ansible(self):
         self.run_role()
         self.assertFalse(self.config()["idle_enabled"])
+        self.assertTrue(self.config()["pre_change_backups"])
         state = self.root / "home/control"
         (state / "world.json").write_text('{"world":"ChosenThroughScript"}')
         (state / "idle.json").write_text('{"example":"untouched"}')
@@ -132,6 +169,22 @@ class ProvisionTests(unittest.TestCase):
         self.assertIs(self.config()["idle_enabled"], True)
         self.assertEqual(self.config()["idle_timeout"], 3600)
         self.assertEqual(self.config()["query_address"], "192.168.68.111:2457")
+        self.assertTrue(self.config()["pre_change_backups"])
+        rendered = yaml.safe_load((self.project / "docker-compose.yml").read_text())
+        self.assertEqual(rendered["services"]["valheim"]["environment"]["BACKUPS"], "false")
+        # Native game backups keep their defaults: BACKUPS only controls the
+        # image's scheduled worker, not Valheim's -backups/-backup* arguments.
+        self.assertNotIn("-backup", rendered["services"]["valheim"]["environment"].get("SERVER_ARGS", ""))
+
+    def test_scheduled_backups_do_not_control_pre_change_archives(self):
+        self.variables["valheim_backups_enabled"] = False
+        self.run_role()
+        self.assertTrue(self.config()["pre_change_backups"])
+        self.variables["valheim_pre_change_backups"] = False
+        self.run_role()
+        self.assertFalse(self.config()["pre_change_backups"])
+        rendered = yaml.safe_load((self.project / "docker-compose.yml").read_text())
+        self.assertEqual(rendered["services"]["valheim"]["environment"]["BACKUPS"], "false")
 
     def test_compose_profiles_ports_paths_and_literal_secrets(self):
         self.variables.update(valheim_server_port=30000, valheim_worlds_dir=str(self.root / "storage/saves"), valheim_backups_dir=str(self.root / "storage/backups"))

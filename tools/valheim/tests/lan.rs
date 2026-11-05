@@ -62,7 +62,7 @@ async fn lan_clients_can_open_dashboard_but_internet_other_subnets_and_spoofed_h
         ("192.168.69.42:1234", StatusCode::FORBIDDEN),
         ("10.1.1.1:1234", StatusCode::FORBIDDEN),
     ] {
-        for path in ["/", "/app.js", "/api/session"] {
+        for path in ["/valheim", "/app.js", "/api/session"] {
             let request = Request::builder()
                 .uri(path)
                 .header("host", "192.168.68.111:8787")

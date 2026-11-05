@@ -19,6 +19,10 @@ enum Mode {
         bind: Ipv4Addr,
         #[arg(long = "allow-network", default_value = "127.0.0.0/8")]
         networks: Vec<Ipv4Net>,
+        #[arg(long = "allow-host")]
+        hosts: Vec<String>,
+        #[arg(long = "trusted-proxy")]
+        proxies: Vec<Ipv4Net>,
         #[arg(long, default_value_t = 8787)]
         port: u16,
         #[arg(long, default_value = dashboard::SOCKET)]
@@ -43,7 +47,18 @@ async fn main() -> anyhow::Result<()> {
             socket,
             bind,
             networks,
-        } => dashboard::web(port, socket, dashboard::Access::new(bind, networks)?).await,
+            hosts,
+            proxies,
+        } => {
+            dashboard::web(
+                port,
+                socket,
+                dashboard::Access::new(bind, networks)?
+                    .with_hosts(hosts)?
+                    .with_proxies(proxies)?,
+            )
+            .await
+        }
         Mode::Broker { config, socket } => dashboard::broker(&socket, config).await,
     }
 }

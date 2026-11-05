@@ -1,0 +1,33 @@
+---
+- name: Reset discovered dashboard proxy peers
+  ansible.builtin.set_fact:
+    valheim_dashboard_proxy_networks: []
+
+- name: Resolve an explicitly configured dashboard proxy
+  when: valheim_dashboard_proxy_container | length > 0
+  block:
+    - name: Inspect only the configured proxy container
+      community.docker.docker_container_info:
+        name: "{{ valheim_dashboard_proxy_container }}"
+      register: valheim_dashboard_proxy_info
+      no_log: true
+
+    - name: Require the configured proxy container to be running
+      ansible.builtin.assert:
+        that:
+          - valheim_dashboard_proxy_info.exists
+          - valheim_dashboard_proxy_info.container.State.Running
+        fail_msg: Deploy the Compose proxy first, then configure the dashboard; no proxy subnet will be guessed.
+
+    - name: Authorize only the proxy container's exact private IPv4 addresses
+      ansible.builtin.set_fact:
+        valheim_dashboard_proxy_networks: >-
+          {{ valheim_dashboard_proxy_info.container.NetworkSettings.Networks
+             | dict2items | map(attribute='value.IPAddress')
+             | select('match', '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)')
+             | map('regex_replace', '$', '/32') | unique | list }}
+
+    - name: Require a private proxy peer rather than permitting a Docker subnet
+      ansible.builtin.assert:
+        that: valheim_dashboard_proxy_networks | length > 0
+        fail_msg: The proxy has no private IPv4 address; refusing to broaden dashboard access.

@@ -53,8 +53,10 @@ LAN browser -> private address:8787 (TCP client subnet allowlist)
 The web process has neither Docker access nor sudo authorization. Its account is
 locked and has no login shell. A root-owned runtime directory (0750, dedicated
 dashboard group) protects a 0660 broker socket. The broker accepts only typed
-`status`, `start`, `stop`, and `restart` requests, not arbitrary commands/arguments.
-CLI-only backup/update/world actions remain available through SSH.
+`status`, `start`, `stop`, `restart`, `worlds`, `world`, and `delete` requests,
+not arbitrary commands/arguments. World mutations accept a validated save name;
+deletion additionally requires an exact typed confirmation at the broker boundary.
+Manual backup/update actions remain CLI-only through SSH.
 
 HTTP binds to one explicit **RFC1918 LAN or loopback IPv4 address**, never a
 wildcard/public address. The homelab uses `192.168.68.111:8787` and allows
@@ -82,5 +84,11 @@ The next idle sample safely resets any incompatible countdown. Manual backup
 archive layout remains `world.json`, `saves/`, `config/`, `docker-compose.yml`.
 Old Python runtime code is removed only after the Rust binaries are installed.
 
-The shipped scope is status/player count and start/stop/restart. No public
-authentication, world-management UI, backup UI, or extra reverse proxy is included.
+The Home Tools shell redirects `/` to `/valheim`. It includes status/player count,
+start/stop/restart, saved-world discovery, world selection/creation, and confirmed
+deletion. There is no public authentication, backup UI, or extra reverse proxy.
+`--allow-host lab.mathijs.se` explicitly allows that DNS name without relaxing
+the real-peer network allowlist. `--trusted-proxy 172.18.0.2/32` separately trusts
+that exact private proxy peer and its HTTPS forwarding scheme; Ansible discovers
+these addresses from the configured Caddy container. Forwarded client addresses
+are never trusted. See [private DNS and trusted HTTPS](../../docs/home-tools.md).
