@@ -121,7 +121,7 @@ fn tick(controller: &Controller<Fake>, now: u64) -> String {
 }
 
 #[test]
-fn world_changes_can_skip_automatic_backups_without_touching_other_saves() {
+fn world_switch_can_skip_backups_but_deletion_always_creates_a_recoverable_archive() {
     let (_tmp, mut controller) = fixture();
     controller.config.pre_change_backups = false;
     let saves = &controller.config.worlds_dir;
@@ -129,6 +129,14 @@ fn world_changes_can_skip_automatic_backups_without_touching_other_saves() {
     fs::write(saves.join("Other.db"), "other").unwrap();
     fs::write(saves.join("Other.fwl"), "metadata").unwrap();
     fs::write(saves.join("Other_backup_auto-20261105.db"), "backup").unwrap();
+    fs::write(saves.join("Other.db.old"), "old database").unwrap();
+    fs::write(saves.join("Other.fwl.old"), "old metadata").unwrap();
+    let native_backup = saves.join("Other_backup_auto-20261105");
+    fs::create_dir(&native_backup).unwrap();
+    fs::write(native_backup.join("chunk.1"), "native backup").unwrap();
+    let world_dir = saves.join("Other");
+    fs::create_dir(&world_dir).unwrap();
+    fs::write(world_dir.join("chunk.1"), "world data").unwrap();
     fs::write(saves.join("Other2.db"), "unrelated").unwrap();
     controller.select_world("NewWorld").unwrap();
     assert_eq!(fs::read(saves.join("Home.db")).unwrap(), b"home");
@@ -154,6 +162,45 @@ fn world_changes_can_skip_automatic_backups_without_touching_other_saves() {
     assert!(!saves.join("Other.fwl").exists());
     assert!(saves.join("Other2.db").exists());
     assert!(saves.join("Other_backup_auto-20261105.db").exists());
+    assert_eq!(
+        fs::read(native_backup.join("chunk.1")).unwrap(),
+        b"native backup"
+    );
+    assert_eq!(
+        fs::read(saves.join("Other.db.old")).unwrap(),
+        b"old database"
+    );
+    assert_eq!(
+        fs::read(saves.join("Other.fwl.old")).unwrap(),
+        b"old metadata"
+    );
+    for backup in ["Other_backup_auto-20261105", "Other_backup_20261105"] {
+        fs::write(saves.join(format!("{backup}.fwl")), "backup metadata").unwrap();
+        assert!(controller.run("delete-world", Some(backup)).is_err());
+        assert!(saves.join(format!("{backup}.fwl")).exists());
+    }
+    let archives: Vec<_> = fs::read_dir(&controller.config.backups_dir)
+        .unwrap()
+        .collect();
+    assert_eq!(archives.len(), 1);
+    let archive = fs::File::open(archives[0].as_ref().unwrap().path()).unwrap();
+    let restored = tempfile::tempdir().unwrap();
+    tar::Archive::new(flate2::read::GzDecoder::new(archive))
+        .unpack(restored.path())
+        .unwrap();
+    assert_eq!(
+        fs::read(restored.path().join("saves/Other.db")).unwrap(),
+        b"other"
+    );
+    assert_eq!(
+        fs::read(restored.path().join("saves/Other.fwl")).unwrap(),
+        b"metadata"
+    );
+    assert_eq!(
+        fs::read(restored.path().join("saves/Other/chunk.1")).unwrap(),
+        b"world data"
+    );
+    assert!(!world_dir.exists());
     assert!(controller.engine.info.borrow().as_ref().unwrap().running);
 }
 
@@ -216,6 +263,112 @@ fn deletion_backs_up_first_and_aborts_if_backup_fails() {
             .count(),
         1
     );
+}
+
+#[test]
+fn failed_mandatory_deletion_archive_preserves_saves_backups_and_selection() {
+    for failure in [
+        "missing destination",
+        "invalid destination",
+        "missing source",
+    ] {
+        let (_tmp, mut controller) = fixture();
+        controller.config.pre_change_backups = false;
+        controller
+            .engine
+            .info
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .env
+            .insert("WORLD_NAME".into(), "Home".into());
+        let save = controller.config.worlds_dir.join("Other.db");
+        let metadata = controller.config.worlds_dir.join("Other.fwl");
+        fs::write(&save, "keep database").unwrap();
+        fs::write(&metadata, "keep metadata").unwrap();
+        let previous = controller.config.backups_dir.join("previous.tar.gz");
+        fs::write(&previous, "keep previous archive").unwrap();
+        match failure {
+            "missing destination" => {
+                controller.config.backups_dir = controller.config.backups_dir.join("missing")
+            }
+            "invalid destination" => controller.config.backups_dir = previous.clone(),
+            "missing source" => {
+                fs::remove_file(controller.config.project_dir.join("docker-compose.yml")).unwrap()
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            controller.run("delete-world", Some("Other")).is_err(),
+            "{failure}"
+        );
+        assert_eq!(fs::read(&save).unwrap(), b"keep database", "{failure}");
+        assert_eq!(fs::read(&metadata).unwrap(), b"keep metadata", "{failure}");
+        assert_eq!(
+            fs::read(&previous).unwrap(),
+            b"keep previous archive",
+            "{failure}"
+        );
+        assert_eq!(controller.world().unwrap(), "Home");
+        assert!(controller.engine.info.borrow().as_ref().unwrap().running);
+        assert_eq!(controller.engine.stops.get(), 1);
+        assert_eq!(controller.engine.starts.get(), 1);
+    }
+}
+
+#[test]
+fn deletion_refuses_to_remove_a_world_containing_the_backup_destination() {
+    let (_tmp, mut controller) = fixture();
+    controller
+        .engine
+        .info
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .running = false;
+    let world = controller.config.worlds_dir.join("Other");
+    fs::create_dir(&world).unwrap();
+    fs::write(world.join("chunk.1"), "world data").unwrap();
+    controller.config.backups_dir = world.join("backups");
+    fs::create_dir(&controller.config.backups_dir).unwrap();
+    let previous = controller.config.backups_dir.join("previous.tar.gz");
+    fs::write(&previous, "previous archive").unwrap();
+    assert!(
+        controller
+            .run("delete-world", Some("Other"))
+            .unwrap_err()
+            .to_string()
+            .contains("overlaps")
+    );
+    assert_eq!(fs::read(world.join("chunk.1")).unwrap(), b"world data");
+    assert_eq!(fs::read(&previous).unwrap(), b"previous archive");
+    assert_eq!(
+        fs::read_dir(&controller.config.backups_dir)
+            .unwrap()
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn deletion_refuses_to_recursively_remove_embedded_backups() {
+    for filename in ["chunk.1.old", "Other_backup_auto-20261105"] {
+        let (_tmp, controller) = fixture();
+        controller
+            .engine
+            .info
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .running = false;
+        let world = controller.config.worlds_dir.join("Other");
+        fs::create_dir(&world).unwrap();
+        fs::write(world.join("chunk.1"), "world data").unwrap();
+        fs::write(world.join(filename), "embedded backup").unwrap();
+        assert!(controller.run("delete-world", Some("Other")).is_err());
+        assert_eq!(fs::read(world.join("chunk.1")).unwrap(), b"world data");
+        assert_eq!(fs::read(world.join(filename)).unwrap(), b"embedded backup");
+    }
 }
 fn prime(controller: &Controller<Fake>) {
     for now in (0..3600).step_by(60) {

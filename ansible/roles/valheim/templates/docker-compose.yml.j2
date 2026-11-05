@@ -37,6 +37,7 @@ services:
       WORLDS_FILE_PERMISSIONS: "600"
       BACKUPS_DIRECTORY_PERMISSIONS: "700"
       BACKUPS_FILE_PERMISSIONS: "600"
+      # Image backup worker only; Valheim's native -backup* defaults stay intact.
       BACKUPS: {{ ((valheim_backups_enabled | bool) | ternary('true', 'false')) | to_json }}
       BACKUPS_CRON: "0 * * * *"
       BACKUPS_MAX_AGE: "14"

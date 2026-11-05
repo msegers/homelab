@@ -48,6 +48,10 @@ pub fn create_named(config: &Config, world: &str, filename: &str) -> Result<Stri
         .persist_noclobber(&path)
         .map_err(|error| error.error)
         .context("Cannot publish backup; existing archives preserved")?;
+    // Make the published name durable before callers may delete its source.
+    fs::File::open(&destination)?
+        .sync_all()
+        .context("Cannot sync backup directory; archive not confirmed durable")?;
     Ok(path.to_string_lossy().into_owned())
 }
 

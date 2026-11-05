@@ -58,7 +58,7 @@ async function refresh() {
     runningWorld = running ? status.running_world : '';
     backups = status.pre_change_backups !== false;
     text('running-world', runningWorld || '—');
-    text('backup-policy', backups ? 'Automatic backup before world changes: enabled.' : 'Automatic backup before world changes: OFF. Deletion is irreversible without your own backup.');
+    text('backup-policy', `Backup before world switches: ${backups ? 'enabled' : 'OFF'}. Deletion always requires a successful archive.`);
     try {
       const names = await api('/api/worlds');
       if (!Array.isArray(names)) throw new Error('Invalid world list');
@@ -127,7 +127,7 @@ element('create-world').addEventListener('click', () => {
 element('delete-world').addEventListener('click', () => {
   const name = element('saved-world').value;
   if (!name || name === selectedWorld || name === runningWorld) return;
-  const confirmation = prompt(`Delete world "${name}"? ${backups ? 'A backup will be taken first.' : 'NO automatic backup: this is irreversible.'} ${running ? 'Connected players will be disconnected.' : ''} Type the exact world name to confirm.`);
+  const confirmation = prompt(`Delete world "${name}"? A recoverable archive is required first; if it fails, deletion is canceled. ${running ? 'Connected players will be disconnected.' : ''} Type the exact world name to confirm.`);
   if (confirmation !== name) return;
   return worldAction('delete', name, confirmation);
 });

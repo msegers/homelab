@@ -275,6 +275,10 @@ impl<E: Engine> Controller<E> {
     /// The caller holds control.lock. Never remove the selected or live world.
     pub fn delete_world(&self, name: &str) -> Result<String> {
         ensure!(valid_world(name), "Invalid world name");
+        ensure!(
+            !name.contains("_backup_"),
+            "Refusing to delete a native world backup"
+        );
         ensure!(name != self.world()?, "Cannot delete the selected world");
         if let Some(info) = self
             .engine
@@ -313,7 +317,29 @@ impl<E: Engine> Controller<E> {
         }
         ensure!(!paths.is_empty(), "World not found");
         self.while_stopped("World deletion", || {
-            let backup = self.pre_change_backup()?;
+            // Never delete the archive destination along with the world, even
+            // with hand-edited settings that bypass Ansible's storage checks.
+            let destination = fs::canonicalize(&self.config.backups_dir)?;
+            for path in &paths {
+                let target = fs::canonicalize(path)?;
+                ensure!(
+                    !destination.starts_with(&target) && !target.starts_with(&destination),
+                    "World save overlaps the backup destination; refusing deletion"
+                );
+                if path.is_dir() {
+                    for entry in walkdir::WalkDir::new(path).follow_links(false) {
+                        let entry = entry?;
+                        let filename = entry.file_name().to_string_lossy();
+                        ensure!(
+                            !filename.contains("_backup_") && !filename.ends_with(".old"),
+                            "World contains backup files; preserve them outside the world directory before deleting"
+                        );
+                    }
+                }
+            }
+            // Mandatory, regardless of the optional world-switch backup flag.
+            // Publication/sync must succeed before any save is removed.
+            let backup = self.archive()?;
             for path in paths {
                 if path.is_dir() {
                     fs::remove_dir_all(path)?;
@@ -322,7 +348,7 @@ impl<E: Engine> Controller<E> {
                 }
             }
             Ok(format!(
-                "Deleted world {name}; {backup}; existing backups preserved"
+                "Deleted world {name}; backup: {backup}; existing backups preserved"
             ))
         })
     }

@@ -133,6 +133,19 @@ class ProvisionTests(unittest.TestCase):
         self.assertIs(self.config()["idle_enabled"], True)
         self.assertEqual(self.config()["idle_timeout"], 3600)
         self.assertEqual(self.config()["query_address"], "192.168.68.111:2457")
+        self.assertTrue(self.config()["pre_change_backups"])
+        rendered = yaml.safe_load((self.project / "docker-compose.yml").read_text())
+        self.assertEqual(rendered["services"]["valheim"]["environment"]["BACKUPS"], "false")
+        # Native game backups keep their defaults: BACKUPS only controls the
+        # image's scheduled worker, not Valheim's -backups/-backup* arguments.
+        self.assertNotIn("-backup", rendered["services"]["valheim"]["environment"].get("SERVER_ARGS", ""))
+
+    def test_scheduled_backups_do_not_control_pre_change_archives(self):
+        self.variables["valheim_backups_enabled"] = False
+        self.run_role()
+        self.assertTrue(self.config()["pre_change_backups"])
+        self.variables["valheim_pre_change_backups"] = False
+        self.run_role()
         self.assertFalse(self.config()["pre_change_backups"])
         rendered = yaml.safe_load((self.project / "docker-compose.yml").read_text())
         self.assertEqual(rendered["services"]["valheim"]["environment"]["BACKUPS"], "false")

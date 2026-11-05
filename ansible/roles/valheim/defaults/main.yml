@@ -13,9 +13,10 @@ valheim_group: valheim-game
 valheim_config_dir: "{{ valheim_home }}/config"
 valheim_worlds_dir: "{{ valheim_home }}/saves"
 valheim_backups_dir: "{{ valheim_home }}/backups"
-# Manual backups remain available regardless of these switches.
+# Docker image's scheduled backups only; native game backups stay enabled.
 valheim_backups_enabled: true
-valheim_pre_change_backups: "{{ valheim_backups_enabled }}"
+# Independent policy for world switches. Deletion always archives first.
+valheim_pre_change_backups: true
 valheim_data_dir: "{{ valheim_home }}/server"
 valheim_state_dir: "{{ valheim_home }}/control"
 valheim_required_mounts: []

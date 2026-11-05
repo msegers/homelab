@@ -18,6 +18,7 @@ async function page(options = {}) {
     addEventListener(_name, handler) { this.click = handler; },
   }));
   const requests = [];
+  const prompts = [];
   let poll;
   const context = vm.createContext({
     document: {
@@ -26,7 +27,7 @@ async function page(options = {}) {
       createElement: () => ({ value: '', textContent: '' }),
     },
     confirm: () => options.confirm !== false,
-    prompt: () => options.confirmation ?? null,
+    prompt: message => { prompts.push(message); return options.confirmation ?? null; },
     setInterval: callback => { poll = callback; },
     fetch: async (path, init) => {
       requests.push({ path, init });
@@ -49,7 +50,7 @@ async function page(options = {}) {
   });
   vm.runInContext(source, context);
   await flush();
-  return { ids, buttons, requests, poll };
+  return { ids, buttons, requests, prompts, poll };
 }
 
 test('stopped server enables only start; status is rendered as text', async () => {
@@ -129,13 +130,16 @@ test('new worlds validate names and canceled switches do nothing', async () => {
   assert.ok(!requests.some(request => request.path === '/api/action'));
 });
 
-test('deletion requires exact typed confirmation and warns when backups are off', async () => {
+test('deletion requires exact typed confirmation and always promises a mandatory archive', async () => {
   for (const confirmation of ['wrong', 'Other']) {
-    const { ids, requests } = await page({ selectedWorld: 'Home', backups: false, confirmation });
+    const { ids, requests, prompts } = await page({ selectedWorld: 'Home', backups: false, confirmation });
     assert.match(ids.get('backup-policy').textContent, /OFF/);
     assert.equal(ids.get('delete-world').disabled, true);
     ids.get('saved-world').value = 'Other';
     await ids.get('delete-world').click();
+    assert.match(prompts[0], /recoverable archive is required first/);
+    assert.match(prompts[0], /if it fails, deletion is canceled/);
+    assert.match(ids.get('backup-policy').textContent, /Deletion always requires a successful archive/);
     const request = requests.find(request => request.path === '/api/action');
     if (confirmation === 'Other') {
       assert.deepEqual(JSON.parse(request.init.body), { action: 'delete', world: 'Other', confirmation: 'Other' });

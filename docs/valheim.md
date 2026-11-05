@@ -136,18 +136,36 @@ clicked. Switching requires confirmation because players may be disconnected.
 
 Deletion requires typing the exact name, rejects the selected/running world, and
 removes only its exact save directory and/or primary `.db`/`.fwl` files. Symlink
-targets are refused. Other worlds, flat backup files and the backup destination
-are not deleted. A running server is briefly stopped for consistency.
+targets and native `_backup_` world names are refused. Other worlds, native backup
+files/directories, `.old` files and the backup destination are not deleted. A
+running server is briefly stopped for consistency. Deletion refuses a save path
+overlapping the backup destination, so it cannot remove its own recovery archive.
+If a world directory contains `_backup_` or `.old` entries, deletion is refused;
+preserve those backups outside the primary world directory before deleting it.
 
-`valheim_backups_enabled` defaults to `true`: scheduled container backups and
-automatic pre-change archives are enabled. **This host sets it to `false` until
-NAS storage is ready**; the UI explicitly warns that deletion has no automatic
-recovery copy. Manual CLI backups remain available. You can independently set
-`valheim_pre_change_backups` if scheduled and pre-change policy should differ.
-When enabled, a failed pre-change archive aborts the mutation. Existing backups
-are preserved even when automatic backups are disabled. Changing container backup
-settings takes effect the next time the game is started/recreated, not by Ansible
-restarting the game.
+There are three independent backup mechanisms:
+
+- **Docker image's scheduled worker:** `valheim_backups_enabled` controls only
+  the image's `BACKUPS` setting. This host keeps it **`false`** until NAS storage
+  is ready, avoiding scheduled image backups on the SSD.
+- **Controller safety archives:** `valheim_pre_change_backups` independently
+  defaults to **`true`**, and is explicitly enabled on this host. It controls
+  backups before world switches, not scheduled backups. Manual CLI backups remain
+  available. **Deletion always requires a successfully completed archive**, even
+  if this flag is false. An archive failure aborts deletion before touching any
+  world save; existing backups and selection remain unchanged.
+- **Valheim's native automatic backups:** stay enabled using the game's defaults.
+  No `-backups 0` or other native backup-disabling arguments are set. These rolling
+  world backups are separate from the Docker image's scheduled worker.
+
+Deletion archives contain the complete saves, configuration, Compose file and
+selected-world metadata in `valheim_backups_dir`, with private permissions. The
+archive must be finished, synced and published successfully before removal. It
+includes the deleted world's data for recovery, not just the selected world.
+For now these safety archives use the existing local backup directory; move
+`valheim_backups_dir` to the NAS and configure `valheim_required_mounts` when it
+is ready. Changing the image's scheduled-backup setting takes effect on the next
+game start/recreation, not by Ansible restarting the game.
 
 For LAN hostname and port-free access planning, see [Home Tools](home-tools.md).
 

@@ -122,4 +122,7 @@ requirement. HTTPS and making the homelab a router are outside this stage.
 Automated tests use fake engines, local HTTP/Unix sockets, and Ansible fixtures.
 They do not prove live game save compatibility, clean saves during real world
 switches, router isolation, or LAN DNS resolution. Test with disposable worlds
-first; never use valuable saves to validate deletion with backups disabled.
+first. Deletion always requires a successful recovery archive, independently of
+scheduled backups; still verify real-game restoration before relying on it for
+valuable saves. Scheduled image backups remain off until the NAS is ready, while
+pre-change archives and the game's native automatic backups remain enabled.

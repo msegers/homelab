@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -20,8 +21,12 @@ ROLE = ROOT / "ansible/roles/compose"
 
 
 class HomeToolsDnsTests(unittest.TestCase):
+    def test_render_works_without_the_opencode_temporary_directory(self):
+        with mock.patch.object(Path, "is_dir", return_value=False):
+            self.render(None)
+
     def render(self, local_hosts, **overrides):
-        with tempfile.TemporaryDirectory(prefix="home-tools-dns-", dir="/tmp/opencode") as temporary:
+        with tempfile.TemporaryDirectory(prefix="home-tools-dns-", dir="/tmp/opencode" if Path("/tmp/opencode").is_dir() else None) as temporary:
             root = Path(temporary)
             variables = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
             variables.update(compose_bind_ip="192.168.68.111", compose_pihole_password="test-password",
@@ -87,7 +92,7 @@ class HomeToolsDnsTests(unittest.TestCase):
         route = route.replace("reverse_proxy pihole:80", 'respond "Pi-hole fixture" 200')
         route = route.replace("{\n", "{\n\tbind 127.0.0.1\n", 1)
         for network, expected in [("192.168.68.0/24", 403), ("127.0.0.1/32", 200)]:
-            with self.subTest(network=network), tempfile.TemporaryDirectory(prefix="pihole-proxy-", dir="/tmp/opencode") as temporary:
+            with self.subTest(network=network), tempfile.TemporaryDirectory(prefix="pihole-proxy-", dir="/tmp/opencode" if Path("/tmp/opencode").is_dir() else None) as temporary:
                 root = Path(temporary)
                 with socket.socket() as listener:
                     listener.bind(("127.0.0.1", 0))
