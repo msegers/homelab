@@ -1,0 +1,585 @@
+use anyhow::{Result, bail};
+use homelab_valheim::{
+    a2s::Observation,
+    archive,
+    controller::{Config, Container, Controller, save_json, supported_observation, valid_world},
+    engine::{Engine, parse_inspect},
+};
+use serde_json::json;
+use std::{
+    cell::{Cell, RefCell},
+    collections::{HashMap, VecDeque},
+    fs,
+    os::unix::fs::PermissionsExt,
+};
+
+#[derive(Default)]
+struct Fake {
+    info: RefCell<Option<Container>>,
+    players: Cell<u8>,
+    counts: RefCell<VecDeque<Option<Observation>>>,
+    games: RefCell<VecDeque<String>>,
+    activity: Cell<bool>,
+    starts: Cell<usize>,
+    stops: Cell<usize>,
+    compose_fail: Cell<bool>,
+    stop_mode: Cell<u8>,
+    start_mode: Cell<u8>,
+}
+impl Engine for Fake {
+    fn inspect(&self) -> Result<Option<Container>> {
+        Ok(self.info.borrow().clone())
+    }
+    fn compose(&self, args: &[&str], _: &str, _: u64) -> Result<()> {
+        if self.compose_fail.get() {
+            bail!("Injected Compose failure");
+        }
+        if args[0] == "up" {
+            self.starts.set(self.starts.get() + 1);
+            let mut info = self.info.borrow_mut();
+            let info = info.as_mut().unwrap();
+            info.running = self.start_mode.get() != 1;
+            info.restarting = self.start_mode.get() == 2;
+        }
+        Ok(())
+    }
+    fn game_state(&self) -> Result<String> {
+        Ok(self
+            .games
+            .borrow_mut()
+            .pop_front()
+            .unwrap_or_else(|| "RUNNING".into()))
+    }
+    fn stop(&self, _: u64) -> Result<()> {
+        self.stops.set(self.stops.get() + 1);
+        let mut info = self.info.borrow_mut();
+        let info = info.as_mut().unwrap();
+        info.running = self.stop_mode.get() == 1;
+        info.exit_code = if self.stop_mode.get() == 2 { 137 } else { 0 };
+        Ok(())
+    }
+    fn players(&self, _: &Container) -> Result<Observation> {
+        if let Some(count) = self.counts.borrow_mut().pop_front() {
+            return count.ok_or_else(|| anyhow::anyhow!("Injected query failure"));
+        }
+        Ok(Observation {
+            info_players: self.players.get(),
+            player_list_entries: self.players.get(),
+        })
+    }
+    fn recent_activity(&self, _: f64) -> Result<bool> {
+        Ok(self.activity.get())
+    }
+}
+
+fn fixture() -> (tempfile::TempDir, Controller<Fake>) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let config = Config {
+        state_dir: root.join("control"),
+        default_world: "Home".into(),
+        idle_enabled: true,
+        container: "valheim-server".into(),
+        project_name: "homelab-valheim".into(),
+        poll_seconds: 60,
+        idle_timeout: 3600,
+        worlds_dir: root.join("saves"),
+        config_dir: root.join("config"),
+        backups_dir: root.join("backups"),
+        project_dir: root.join("stack"),
+        stop_timeout: 120,
+        query_address: "127.0.0.1:2457".parse().unwrap(),
+    };
+    for path in [
+        &config.state_dir,
+        &config.worlds_dir,
+        &config.config_dir,
+        &config.backups_dir,
+        &config.project_dir,
+    ] {
+        fs::create_dir(path).unwrap();
+    }
+    fs::write(
+        config.project_dir.join("docker-compose.yml"),
+        "services: {}\n",
+    )
+    .unwrap();
+    let engine = Fake {
+        info: RefCell::new(Some(Container {
+            id: "container-1".into(),
+            started_at: "start-1".into(),
+            running: true,
+            ..Default::default()
+        })),
+        ..Default::default()
+    };
+    (directory, Controller { config, engine })
+}
+fn tick(controller: &Controller<Fake>, now: u64) -> String {
+    controller.idle_at(now as f64, 1_700_000_000.0 + now as f64, "boot-1")
+}
+fn prime(controller: &Controller<Fake>) {
+    for now in (0..3600).step_by(60) {
+        tick(controller, now);
+    }
+}
+fn idle_file(controller: &Controller<Fake>) -> std::path::PathBuf {
+    controller.config.state_dir.join("idle.json")
+}
+
+#[test]
+fn idle_stops_only_after_full_hour() {
+    let (_tmp, controller) = fixture();
+    prime(&controller);
+    assert_eq!(controller.engine.stops.get(), 0);
+    assert!(tick(&controller, 3600).contains("Stopped Valheim"));
+    assert_eq!(controller.engine.stops.get(), 1);
+    assert!(!idle_file(&controller).exists());
+}
+
+#[test]
+fn player_failure_disagreement_activity_and_unhealthy_process_reset_countdown() {
+    for condition in [
+        "player", "query", "disagree", "activity", "STARTING", "FATAL", "BACKOFF", "STOPPED",
+        "unknown",
+    ] {
+        let (_tmp, controller) = fixture();
+        prime(&controller);
+        match condition {
+            "player" => controller.engine.players.set(1),
+            "query" => controller.engine.counts.borrow_mut().push_back(None),
+            "disagree" => controller
+                .engine
+                .counts
+                .borrow_mut()
+                .push_back(Some(Observation {
+                    info_players: 0,
+                    player_list_entries: 1,
+                })),
+            "activity" => controller.engine.activity.set(true),
+            state => controller.engine.games.borrow_mut().push_back(state.into()),
+        }
+        tick(&controller, 3600);
+        assert_eq!(controller.engine.stops.get(), 0, "{condition}");
+        assert!(!idle_file(&controller).exists(), "{condition}");
+        controller.engine.players.set(0);
+        controller.engine.activity.set(false);
+        tick(&controller, 3660);
+        let state: serde_json::Value =
+            serde_json::from_slice(&fs::read(idle_file(&controller)).unwrap()).unwrap();
+        assert_eq!(state["zero_since"], 3660.0);
+    }
+}
+
+#[test]
+fn final_query_and_process_failure_prevent_stop() {
+    for fail_game in [false, true] {
+        let (_tmp, controller) = fixture();
+        prime(&controller);
+        if fail_game {
+            controller
+                .engine
+                .games
+                .borrow_mut()
+                .extend(["RUNNING".into(), "BACKOFF".into()]);
+        } else {
+            controller.engine.counts.borrow_mut().extend([
+                Some(Observation {
+                    info_players: 0,
+                    player_list_entries: 0,
+                }),
+                Some(Observation {
+                    info_players: 1,
+                    player_list_entries: 1,
+                }),
+            ]);
+        }
+        tick(&controller, 3600);
+        assert_eq!(controller.engine.stops.get(), 0);
+        assert!(!idle_file(&controller).exists());
+    }
+}
+
+#[test]
+fn gaps_restart_boot_and_wall_clock_changes_reset_countdown() {
+    for reason in ["gap", "restart", "boot", "clock"] {
+        let (_tmp, controller) = fixture();
+        tick(&controller, 0);
+        let now = if reason == "gap" { 4000.0 } else { 60.0 };
+        if reason == "restart" {
+            controller
+                .engine
+                .info
+                .borrow_mut()
+                .as_mut()
+                .unwrap()
+                .started_at = "new".into();
+        }
+        controller.idle_at(
+            now,
+            1_700_000_000.0 + now + if reason == "clock" { 100.0 } else { 0.0 },
+            if reason == "boot" { "new" } else { "boot-1" },
+        );
+        let state: serde_json::Value =
+            serde_json::from_slice(&fs::read(idle_file(&controller)).unwrap()).unwrap();
+        assert_eq!(state["zero_since"], now, "{reason}");
+        assert_eq!(controller.engine.stops.get(), 0);
+    }
+}
+
+#[test]
+fn corrupt_countdown_is_never_reused() {
+    for bytes in [
+        "not json",
+        "[]",
+        r#"{"token":["container-1","start-1","boot-1"],"zero_since":-10000,"last_check":0,"last_wall":1700000000}"#,
+    ] {
+        let (_tmp, controller) = fixture();
+        fs::write(idle_file(&controller), bytes).unwrap();
+        tick(&controller, 60);
+        let state: serde_json::Value =
+            serde_json::from_slice(&fs::read(idle_file(&controller)).unwrap()).unwrap();
+        assert_eq!(state["zero_since"], 60.0);
+        assert_eq!(controller.engine.stops.get(), 0);
+    }
+}
+
+#[test]
+fn disabled_and_stopped_games_are_never_started() {
+    let (_tmp, mut controller) = fixture();
+    controller.config.idle_enabled = false;
+    tick(&controller, 0);
+    controller.config.idle_enabled = true;
+    controller
+        .engine
+        .info
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .running = false;
+    tick(&controller, 4000);
+    assert_eq!(controller.engine.starts.get(), 0);
+    assert_eq!(controller.engine.stops.get(), 0);
+}
+
+#[test]
+fn interrupted_query_clears_state_before_work() {
+    let (_tmp, controller) = fixture();
+    tick(&controller, 0);
+    controller.engine.counts.borrow_mut().push_back(None);
+    tick(&controller, 60);
+    assert!(!idle_file(&controller).exists());
+}
+
+#[test]
+fn world_selection_freezes_and_world_switch_preserves_stopped_state() {
+    let (_tmp, mut controller) = fixture();
+    controller.start(false).unwrap();
+    controller.config.default_world = "ChangedDefault".into();
+    assert_eq!(controller.world().unwrap(), "Home");
+    controller
+        .engine
+        .info
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .running = false;
+    controller.select_world("OtherWorld").unwrap();
+    assert_eq!(controller.world().unwrap(), "OtherWorld");
+    assert!(!controller.engine.info.borrow().as_ref().unwrap().running);
+    assert_eq!(controller.engine.starts.get(), 1);
+}
+
+#[test]
+fn consistent_archive_contains_current_world_and_private_permissions() {
+    let (_tmp, controller) = fixture();
+    let world = controller.config.worlds_dir.join("MyWorld");
+    fs::create_dir(&world).unwrap();
+    fs::write(world.join("chunk.1"), "saved data").unwrap();
+    fs::write(world.join("_main.1.fwl2"), "metadata").unwrap();
+    controller
+        .engine
+        .info
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .running = false;
+    let path = controller.backup().unwrap();
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let mut archive =
+        tar::Archive::new(flate2::read::GzDecoder::new(fs::File::open(path).unwrap()));
+    let names: Vec<_> = archive
+        .entries()
+        .unwrap()
+        .map(|entry| entry.unwrap().path().unwrap().into_owned())
+        .collect();
+    assert!(names.contains(&"saves/MyWorld/chunk.1".into()));
+    assert!(names.contains(&"world.json".into()));
+    assert!(names.contains(&"docker-compose.yml".into()));
+    assert_eq!(controller.engine.starts.get(), 0);
+}
+
+#[test]
+fn running_backup_resumes_but_failed_archive_preserves_earlier_backups() {
+    let (_tmp, mut controller) = fixture();
+    let old = controller.backup().unwrap();
+    let contents = fs::read(&old).unwrap();
+    assert_eq!(controller.engine.stops.get(), 1);
+    assert_eq!(controller.engine.starts.get(), 1);
+    controller.config.worlds_dir = controller.config.worlds_dir.join("missing");
+    assert!(
+        controller
+            .backup()
+            .unwrap_err()
+            .to_string()
+            .contains("Valheim resumed")
+    );
+    assert_eq!(fs::read(&old).unwrap(), contents);
+    assert_eq!(controller.engine.starts.get(), 2);
+    assert_eq!(
+        fs::read_dir(&controller.config.backups_dir)
+            .unwrap()
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn backup_collision_and_publication_errors_preserve_existing_archives() {
+    let (_tmp, controller) = fixture();
+    let path = archive::create_named(&controller.config, "Home", "fixed.tar.gz").unwrap();
+    let old = fs::read(&path).unwrap();
+    assert!(archive::create_named(&controller.config, "Home", "fixed.tar.gz").is_err());
+    assert_eq!(fs::read(&path).unwrap(), old);
+    fs::create_dir(controller.config.backups_dir.join("directory.tar.gz")).unwrap();
+    assert!(archive::create_named(&controller.config, "Home", "directory.tar.gz").is_err());
+    assert!(
+        fs::read_dir(&controller.config.backups_dir)
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".partial"))
+    );
+}
+
+#[test]
+fn backup_rejects_sources_inside_destination_and_excludes_nested_backups() {
+    let (_tmp, mut controller) = fixture();
+    controller.config.config_dir = controller.config.backups_dir.clone();
+    assert!(
+        controller
+            .archive()
+            .unwrap_err()
+            .to_string()
+            .contains("inside the backup destination")
+    );
+    let (_tmp, mut controller) = fixture();
+    controller.config.backups_dir = controller.config.config_dir.join("backups");
+    fs::create_dir(&controller.config.backups_dir).unwrap();
+    fs::write(
+        controller.config.backups_dir.join("previous.tar.gz"),
+        "secret previous backup",
+    )
+    .unwrap();
+    let path = controller.archive().unwrap();
+    let mut archive =
+        tar::Archive::new(flate2::read::GzDecoder::new(fs::File::open(path).unwrap()));
+    assert!(archive.entries().unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .path()
+            .unwrap()
+            .to_string_lossy()
+            .contains("backups")
+    }));
+}
+
+#[test]
+fn unclean_stops_abort_before_archiving_or_resuming() {
+    for (mode, message) in [(1, "still running"), (2, "SIGKILL")] {
+        let (_tmp, controller) = fixture();
+        controller.engine.stop_mode.set(mode);
+        assert!(
+            controller
+                .backup()
+                .unwrap_err()
+                .to_string()
+                .contains(message)
+        );
+        assert_eq!(
+            fs::read_dir(&controller.config.backups_dir)
+                .unwrap()
+                .count(),
+            0
+        );
+        assert_eq!(controller.engine.starts.get(), 0);
+    }
+}
+
+#[test]
+fn successful_backup_is_reported_when_resume_fails() {
+    let (_tmp, controller) = fixture();
+    controller.engine.compose_fail.set(true);
+    let error = controller.backup().unwrap_err().to_string();
+    assert!(error.contains("Backup completed:"));
+    assert!(error.contains("resuming Valheim also failed"));
+    assert_eq!(
+        fs::read_dir(&controller.config.backups_dir)
+            .unwrap()
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn both_archive_and_resume_failure_are_reported_and_world_is_unchanged() {
+    let (_tmp, mut controller) = fixture();
+    controller.config.worlds_dir = controller.config.worlds_dir.join("missing");
+    controller.engine.compose_fail.set(true);
+    let error = controller
+        .select_world("OtherWorld")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("World switch failed"));
+    assert!(error.contains("resuming Valheim also failed"));
+    assert_eq!(controller.world().unwrap(), "Home");
+}
+
+#[test]
+fn failed_pull_does_not_stop_game_and_restart_failure_is_explicit() {
+    let (_tmp, controller) = fixture();
+    controller.engine.compose_fail.set(true);
+    assert!(
+        controller
+            .run("update", None)
+            .unwrap_err()
+            .to_string()
+            .contains("existing game was left unchanged")
+    );
+    assert_eq!(controller.engine.stops.get(), 0);
+    assert!(
+        controller
+            .restart()
+            .unwrap_err()
+            .to_string()
+            .contains("Restart failed after stopping")
+    );
+    assert_eq!(controller.engine.stops.get(), 1);
+}
+
+#[test]
+fn fatal_and_exited_start_failures_are_not_successes() {
+    for state in ["FATAL", "BACKOFF", "exited", "restarting"] {
+        let (_tmp, controller) = fixture();
+        match state {
+            "exited" => controller.engine.start_mode.set(1),
+            "restarting" => controller.engine.start_mode.set(2),
+            state => controller.engine.games.borrow_mut().push_back(state.into()),
+        }
+        assert!(controller.start(false).is_err(), "{state}");
+    }
+}
+
+#[test]
+fn inspect_ownership_refuses_other_projects_and_services() {
+    let (_tmp, controller) = fixture();
+    for (project, service) in [
+        ("homelab", "proxy"),
+        ("homelab", "pihole"),
+        ("homelab", "website"),
+        ("homelab-valheim", "other"),
+    ] {
+        let info = json!([{"Config":{"Labels":{"com.docker.compose.project":project,"com.docker.compose.service":service}},"State":{"Running":true}}]);
+        assert!(
+            parse_inspect(&controller.config, &info.to_string())
+                .unwrap_err()
+                .to_string()
+                .contains("another project/service")
+        );
+    }
+}
+
+#[test]
+fn unsupported_modes_and_invalid_world_names_fail_closed() {
+    for env in [
+        HashMap::new(),
+        HashMap::from([("SERVER_PUBLIC".into(), "false".into())]),
+        HashMap::from([
+            ("SERVER_PUBLIC".into(), "true".into()),
+            ("CROSSPLAY".into(), "true".into()),
+        ]),
+        HashMap::from([
+            ("SERVER_PUBLIC".into(), "true".into()),
+            ("SERVER_ARGS".into(), "-crossplay".into()),
+        ]),
+    ] {
+        assert!(
+            supported_observation(&Container {
+                env,
+                ..Default::default()
+            })
+            .is_err()
+        );
+    }
+    for world in ["", "../world", "-world", "name;whoami", "a\n"] {
+        assert!(!valid_world(world));
+    }
+    for world in ["Home", "new-world_2", "_home", "1"] {
+        assert!(valid_world(world));
+    }
+}
+
+#[test]
+fn status_exposes_only_player_counts_not_game_password() {
+    let (_tmp, controller) = fixture();
+    controller
+        .engine
+        .info
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .env
+        .insert("SERVER_PASS".into(), "secret-value".into());
+    let status = controller.status().unwrap();
+    assert_eq!(status["players"], 0);
+    assert!(!status.to_string().contains("secret-value"));
+}
+
+#[test]
+fn selected_world_json_is_private_and_invalid_selection_is_rejected() {
+    let (_tmp, controller) = fixture();
+    let path = controller.config.state_dir.join("world.json");
+    save_json(&path, &json!({"world":"Saved"})).unwrap();
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(controller.world().unwrap(), "Saved");
+    save_json(&path, &json!({"world":"../bad"})).unwrap();
+    assert!(controller.world().is_err());
+}
+
+#[test]
+fn contending_idle_check_skips_and_discards_stale_countdown() {
+    let (_tmp, controller) = fixture();
+    tick(&controller, 0);
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(controller.config.state_dir.join("control.lock"))
+        .unwrap();
+    fs2::FileExt::lock_exclusive(&lock).unwrap();
+    assert!(
+        controller
+            .run("idle", None)
+            .unwrap()
+            .contains("another operation")
+    );
+    assert!(!idle_file(&controller).exists());
+    assert_eq!(controller.engine.stops.get(), 0);
+}

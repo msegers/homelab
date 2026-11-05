@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Valheim · Homelab</title>
+    <link rel="stylesheet" href="/app.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">HOMELAB / PRIVATE CONTROLS</p>
+        <h1>Valheim</h1>
+        <p class="subtitle">Your world, when you need it.</p>
+      </header>
+      <section aria-label="Server status">
+        <div class="heading"><h2>Server</h2><span id="running" class="badge">Checking…</span></div>
+        <dl>
+          <div><dt>Game process</dt><dd id="game">—</dd></div>
+          <div><dt>Players online</dt><dd id="players">—</dd></div>
+          <div><dt>Selected world</dt><dd id="world">—</dd></div>
+          <div><dt>Idle shutdown</dt><dd id="idle">—</dd></div>
+        </dl>
+        <div class="actions" aria-label="Server controls">
+          <button data-action="start" class="primary" disabled>Start server</button>
+          <button data-action="stop" disabled>Stop</button>
+          <button data-action="restart" disabled>Restart</button>
+        </div>
+        <p id="message" role="status" aria-live="polite">Loading status…</p>
+      </section>
+      <footer>
+        Status refreshes every 15 seconds. First startup can take several minutes.
+        A running container does not guarantee the game has finished loading.
+      </footer>
+    </main>
+  </body>
+</html>

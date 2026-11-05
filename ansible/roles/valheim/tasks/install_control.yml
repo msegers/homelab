@@ -7,13 +7,27 @@
     group: root
     mode: "0755"
 
-- name: Install controller
+- name: Build Rust controller and dashboard locally
+  ansible.builtin.command:
+    argv: ["{{ valheim_cargo_command }}", build, --release, --locked, --target, "{{ valheim_rust_target }}"]
+    chdir: "{{ role_path }}/../../../tools/valheim"
+  environment:
+    CARGO_TARGET_DIR: "{{ role_path }}/../../../tools/valheim/target"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Install Rust controller and dashboard
   ansible.builtin.copy:
-    src: control.py
-    dest: /usr/local/libexec/homelab-valheim/control.py
+    src: "{{ role_path }}/../../../tools/valheim/target/{{ valheim_rust_target }}/release/{{ item }}"
+    dest: "/usr/local/libexec/homelab-valheim/{{ item }}"
     owner: root
     group: root
     mode: "0755"
+  loop: [valheim-control, valheim-dashboard]
+  register: valheim_rust_install
 
 - name: Install administrative command
   ansible.builtin.template:
@@ -22,3 +36,8 @@
     owner: root
     group: root
     mode: "0755"
+
+- name: Remove the replaced Python controller
+  ansible.builtin.file:
+    path: /usr/local/libexec/homelab-valheim/control.py
+    state: absent

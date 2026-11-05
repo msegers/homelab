@@ -3,10 +3,13 @@
 Valheim uses the EliteDesk's existing Docker Engine, in its own Compose project.
 Scripts control it over SSH. An opt-in systemd timer can stop it after an hour
 empty, once player detection has passed the [live acceptance test](valheim-acceptance.md).
+The [private dashboard](#private-dashboard) provides status and start/stop/restart
+buttons. Both services and the CLI controller are Rust, with source in
+[`tools/valheim/`](../tools/valheim/).
 
 ## Enable and choose storage
 
-Add to `ansible/host_vars/elitedesk/main.yml`:
+Add to `ansible/host_vars/homelab/main.yml`:
 
 ```yaml
 valheim_enabled: true
@@ -31,14 +34,36 @@ before creation; an existing account is never renumbered. Directories use mode
 (including host-admin access for manual backups).
 Set `valheim_required_mounts: [/mnt/nas]` to fail safely if
 your required mount is missing. Existing NAS mount configuration stays as-is.
+Use canonical absolute paths for storage and administrative directories: no
+symlinks (including parent directories), duplicate slashes, or trailing slashes.
+Ansible rejects system storage roots and game mounts that would expose the
+administrative home, control files, or Docker sockets before changing directories.
+Saves and backups must be separate, non-nested directories. Configuration must
+not be inside the backup destination; manual archives exclude that destination
+to avoid recursively backing up earlier archives.
+
+Before provisioning from a Linux x86_64 controller, install Rust 1.88+ and its
+static target once:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+```
+
+Ansible builds the locked Rust project locally and copies static binaries to the
+host; no compiler or Rust toolchain is installed on the EliteDesk. See the
+[development guide](../tools/valheim/README.md) for build and test commands.
 
 Add `vault_valheim_server_password: 'YOUR_GAME_PASSWORD'` (5+ characters) using:
 
 ```bash
 cd ansible
-ansible-vault edit host_vars/elitedesk/vault.yml
+ansible-vault edit host_vars/homelab/vault.yml
 ansible-playbook site.yml --tags valheim --ask-vault-pass
 ```
+
+Normally, deploy the entire homelab with
+`ansible-playbook site.yml --ask-vault-pass --ask-become-pass` from `ansible/`.
+The `--tags valheim` example above is an optional way to apply only Valheim changes.
 
 Provisioning leaves the game stopped. The normal playbook includes this role
 when enabled; the default is disabled. Other settings live in
@@ -59,11 +84,13 @@ From the repository root, with Ansible available:
 ```
 
 The script uses your **gitignored `ansible/inventory.ini`** and normal host
-variables/Vault. It prompts for the Vault password unless you configure Ansible's
-standard password-file/identity options. Extra Ansible flags are forwarded:
+variables/Vault. It prompts for the privilege-escalation password (root's password
+when the inventory uses `ansible_become_method=su`) and for the Vault password
+unless you configure Ansible's standard password-file/identity options. Extra
+Ansible flags are forwarded:
 
 ```bash
-./scripts/valheim start --limit elitedesk --ask-become-pass
+./scripts/valheim start --limit homelab
 ```
 
 First start downloads the image/game; allow several minutes. Join
@@ -93,6 +120,59 @@ Keep the game stopped, review the exact paths, and preserve an off-host backup.
 Never chown an entire shared NAS directory. For a storage move, copy data first,
 adjust ownership, update the variables, reprovision, then start and verify saves.
 
+## Private dashboard
+
+The homelab host settings enable the dashboard; the reusable role defaults it off.
+To opt in on another host, set `valheim_dashboard_enabled: true`. The optional
+`valheim_dashboard_port` defaults to **8787**. The bind address is deliberately
+fixed to **127.0.0.1**, not the LAN/WAN interfaces.
+
+Deploy from the repository root after installing the Rust prerequisites above:
+
+```bash
+cd ansible
+ansible-playbook site.yml --tags valheim --ask-vault-pass --ask-become-pass
+```
+
+This installs/starts `valheim-dashboard.service` and
+`valheim-dashboard-broker.service`, updates the controller and timer, and leaves
+the game running/stopped as it was. No website/Caddy changes or public ports.
+
+On your laptop, use your inventory's SSH user/address to open a tunnel:
+
+```bash
+ssh -N -L 127.0.0.1:8787:127.0.0.1:8787 YOUR_SSH_USER@192.168.68.111
+```
+
+Keep that terminal open and visit **http://127.0.0.1:8787**. If that local port is
+busy, use `127.0.0.1:8788:127.0.0.1:8787` and browse port 8788 instead.
+An SSH address reachable through Tailscale works too; there is no direct
+Tailscale/public HTTP listener. Do not configure router forwarding or Caddy for it.
+
+The page shows container/game status, player count (or unknown), selected world,
+and configured idle policy. Start, stop, and restart reuse the existing controller
+and lock. Stop/restart require confirmation; controls are disabled during work.
+Initial downloads can take minutes. A successful start is not a game-readiness
+guarantee. Backups, updates, and world selection remain CLI-only.
+
+The web account cannot read game secrets, invoke sudo, or access Docker. Its
+Unix-socket broker allows only the four intended operations. SSH is the access
+boundary: local users or anyone with tunnel access can control the game; this
+is not a public login-enabled application.
+
+Check on the server:
+
+```bash
+sudo systemctl status valheim-dashboard.service valheim-dashboard-broker.service
+sudo journalctl -u valheim-dashboard.service -u valheim-dashboard-broker.service -n 40
+sudo ss -lntp 'sport = :8787'
+```
+
+Expect the listener at `127.0.0.1:8787`, never `0.0.0.0` or the LAN IP. Set
+`valheim_dashboard_enabled: false` and redeploy to stop only the dashboard/helper,
+leaving the game and its idle timer alone. Retirement stops both dashboard units
+before stopping Valheim and preserves all saves/backups.
+
 ## Automatic shutdown
 
 When enabled, the system-wide **`valheim-idle.timer`** checks every 60 seconds. After
@@ -101,7 +181,10 @@ container (120-second save/shutdown allowance).
 
 - Player activity, failed/disagreeing queries, restarts, and monitoring gaps
   reset the countdown. Connection logs also catch short visits between polls.
-- Counts are queried inside the container using Steam A2S. This requires
+- The game process must report RUNNING at each poll and the final stop check;
+  starting, failed, stopped, or unknown process states reset the countdown.
+- Counts are queried by Rust over Steam A2S at the host's published query port.
+  No Python query script runs in the container. This requires
   `valheim_server_public: true` and `valheim_crossplay: false` (defaults).
   Public listing does not configure router port forwarding.
 - A2S_PLAYER entries can have blank names and some modes/versions report false

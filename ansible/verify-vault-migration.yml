@@ -1,0 +1,48 @@
+---
+# Local, read-only comparison. Never loads the real inventory or contacts a host.
+- name: Verify existing encrypted secrets survived the inventory rename
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    current_vault_file: "{{ playbook_dir }}/host_vars/homelab/vault.yml"
+  tasks:
+    - name: Require an explicit previous encrypted Vault file
+      ansible.builtin.assert:
+        that:
+          - previous_vault_file is defined
+          - previous_vault_file | default('') is match('^/')
+        fail_msg: Supply -e previous_vault_file=/absolute/path/to/your/previous/vault.yml.
+
+    - name: Read previous secrets without displaying them
+      ansible.builtin.include_vars:
+        file: "{{ previous_vault_file }}"
+        name: previous_secrets
+      no_log: true
+
+    - name: Read current secrets without displaying them
+      ansible.builtin.include_vars:
+        file: "{{ current_vault_file }}"
+        name: current_secrets
+      no_log: true
+
+    - name: Require the expected existing Pi-hole secret
+      ansible.builtin.assert:
+        that:
+          - previous_secrets is mapping
+          - current_secrets is mapping
+          - "'vault_compose_pihole_password' in previous_secrets"
+      no_log: true
+
+    - name: Verify every previously stored value is present and unchanged
+      ansible.builtin.assert:
+        that:
+          - item.key in current_secrets
+          - current_secrets[item.key] == item.value
+      loop: "{{ previous_secrets | dict2items }}"
+      no_log: true
+
+    - name: Report comparison result without secret values
+      ansible.builtin.debug:
+        msg: All previously stored values match. No files, passwords, or live services were changed. Newly added keys were not present in the previous file and cannot be checked against it.

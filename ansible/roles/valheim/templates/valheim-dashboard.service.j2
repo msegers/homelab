@@ -1,0 +1,25 @@
+[Unit]
+Description=Private Valheim dashboard (loopback only)
+Requires=valheim-dashboard-broker.service
+After=valheim-dashboard-broker.service
+
+[Service]
+Type=simple
+User=valheim-dashboard
+Group=valheim-dashboard
+ExecStart=/usr/local/libexec/homelab-valheim/valheim-dashboard web --port {{ valheim_dashboard_port | int }}
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+InaccessiblePaths=-/run/docker.sock -/var/run/docker.sock
+
+[Install]
+WantedBy=multi-user.target

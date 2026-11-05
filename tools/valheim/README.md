@@ -1,0 +1,81 @@
+# Valheim tools
+
+One Rust project for the controller, idle checker, and private dashboard. Ansible
+is the installer, not the application's source directory.
+
+## Build and test
+
+Install Rust **1.88+** with rustup on your Linux Ansible controller:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+cd tools/valheim
+cargo test --locked
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+node --test web/app.test.mjs
+cargo build --release --locked --target x86_64-unknown-linux-musl
+```
+
+The musl target is statically linked using Rust's bundled linker: no system
+musl compiler, target-side Rust install, Node runtime, or Python daemon is needed.
+The lockfile pins Rust dependencies. Node is only used for optional UI tests.
+The deployment controller must be Linux x86_64 for this default build path.
+
+## Where to change things
+
+| Path | Responsibility |
+| --- | --- |
+| `src/controller.rs` | Lifecycle, state/locking, idle countdown, status |
+| `src/engine.rs` | Explicitly scoped Docker commands with timeouts |
+| `src/a2s.rs` | Native UDP Steam player-count queries |
+| `src/archive.rs` | Private, consistent, non-overwriting backups |
+| `src/dashboard.rs` | HTTP API and restricted local broker |
+| `src/bin/` | Two small executable entry points |
+| `web/index.html`, `web/app.css`, `web/app.js` | UI, without a frontend framework |
+| `tests/` | Controller and HTTP/Unix-socket regression tests |
+| `../../ansible/roles/valheim/` | Configuration, build/install, systemd units |
+
+Frontend files are compiled into the dashboard binary with `include_str!` from
+separate files. Edit them normally and rebuild/redeploy; no npm install or asset
+bundler. UI testing uses Node's built-in runner with a small DOM/fetch stub.
+
+## Privilege boundary
+
+```text
+browser -> SSH tunnel -> 127.0.0.1:8787
+                         dashboard (valheim-dashboard user)
+                             -> /run/valheim-dashboard/control.sock
+                                broker (root, Unix socket only)
+                                    -> shared Rust controller -> existing Docker Engine
+```
+
+The web process has neither Docker access nor sudo authorization. Its account is
+locked and has no login shell. A root-owned runtime directory (0750, dedicated
+dashboard group) protects a 0660 broker socket. The broker accepts only typed
+`status`, `start`, `stop`, and `restart` requests, not arbitrary commands/arguments.
+CLI-only backup/update/world actions remain available through SSH.
+
+HTTP binds **only 127.0.0.1**, with no configurable public bind address. Host checks
+reject DNS rebinding, mutations require a same-origin request plus a random token,
+and CSP denies framing/inline scripts. This is not a public, multi-user auth
+system: local users and anyone authorized to open the SSH tunnel can control the
+game. Do not forward the port, publish it in Caddy, or expose a tunnel publicly.
+
+Operations share the existing filesystem lock; the broker reports busy rather
+than queuing simultaneous browser operations. CLI operations can also hold the
+lock. A failed/timed-out request is not proof that a game operation was canceled:
+check status before retrying. A2S split/compressed or malformed packets return
+unknown, never zero; monitoring uncertainty resets the idle countdown.
+
+## Deployment and migration
+
+Follow [dashboard deployment/access](../../docs/valheim.md#private-dashboard).
+Ansible preserves existing `world.json`, saves, and manual archives. The Rust
+controller reads the existing config/state shapes; Ansible adds `query_address`.
+The next idle sample safely resets any incompatible countdown. Manual backup
+archive layout remains `world.json`, `saves/`, `config/`, `docker-compose.yml`.
+Old Python runtime code is removed only after the Rust binaries are installed.
+
+The shipped scope is status/player count and start/stop/restart. No public
+authentication, world-management UI, backup UI, or extra reverse proxy is included.

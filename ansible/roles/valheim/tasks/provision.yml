@@ -14,21 +14,46 @@
       - valheim_server_name | length > 0
       - valheim_idle_timeout_seconds | int >= 60
       - 15 <= valheim_idle_poll_seconds | int <= 600
+      - 1 <= valheim_stop_timeout | int <= 3600
     fail_msg: Use an amd64 host, assigned bind address, a valid world name/UDP port, and a 60+ second idle timeout.
 
 - name: Validate storage directories
   ansible.builtin.assert:
     that:
       - item is match('^/[A-Za-z0-9_/-]+$')
-      - item not in ['/', '/opt', '/mnt', '/home', '/var', '/var/lib']
+      - item not in ['/', '/bin', '/boot', '/dev', '/etc', '/home', '/lib', '/lib64', '/media', '/mnt', '/opt', '/proc', '/root', '/run', '/sbin', '/srv', '/sys', '/tmp', '/usr', '/var', '/var/lib']
     fail_msg: Choose dedicated absolute Valheim subdirectories, not storage roots.
   loop:
+    - "{{ valheim_home }}"
     - "{{ valheim_project_dir }}"
     - "{{ valheim_config_dir }}"
     - "{{ valheim_worlds_dir }}"
     - "{{ valheim_backups_dir }}"
     - "{{ valheim_data_dir }}"
     - "{{ valheim_state_dir }}"
+
+- name: Resolve storage and administrative paths before changing directories
+  ansible.builtin.command:
+    argv: [realpath, --canonicalize-missing, --, "{{ item }}"]
+  loop:
+    - "{{ valheim_home }}"
+    - "{{ valheim_project_dir }}"
+    - "{{ valheim_config_dir }}"
+    - "{{ valheim_worlds_dir }}"
+    - "{{ valheim_backups_dir }}"
+    - "{{ valheim_data_dir }}"
+    - "{{ valheim_state_dir }}"
+  register: valheim_canonical_paths
+  changed_when: false
+  check_mode: false
+
+- name: Require canonical paths without symlinks or path aliases
+  ansible.builtin.assert:
+    that: item.stdout == item.item
+    fail_msg: Use canonical directory paths without symlinks, duplicate slashes, or trailing slashes.
+  loop: "{{ valheim_canonical_paths.results }}"
+  loop_control:
+    label: "{{ item.item }}"
 
 - name: Keep saves and backups in separate directories
   ansible.builtin.assert:
@@ -38,6 +63,13 @@
       - not valheim_worlds_dir.startswith(valheim_backups_dir.rstrip('/') ~ '/')
     fail_msg: Saves and backups must be separate, non-nested directories.
 
+- name: Keep configuration outside the backup destination
+  ansible.builtin.assert:
+    that:
+      - valheim_config_dir != valheim_backups_dir
+      - not valheim_config_dir.startswith(valheim_backups_dir ~ '/')
+    fail_msg: The backup destination must not contain game configuration; those files would be excluded from manual archives.
+
 - name: Keep administrative files and Docker sockets out of game mounts
   ansible.builtin.assert:
     that:
@@ -46,6 +78,7 @@
     fail_msg: Game storage must not expose administrative files or Docker sockets.
   vars:
     protected:
+      - "{{ valheim_home }}"
       - "{{ valheim_state_dir }}"
       - "{{ valheim_project_dir }}"
       - /run/docker.sock

@@ -1,6 +1,6 @@
 ---
 - name: Provision Debian homelab with Docker Compose
-  hosts: homelab
+  hosts: homelab_hosts
   become: true
   gather_facts: true
 

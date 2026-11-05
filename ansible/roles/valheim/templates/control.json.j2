@@ -10,5 +10,6 @@
   'stop_timeout': valheim_stop_timeout | int,
   'idle_enabled': valheim_idle_shutdown_enabled | bool,
   'idle_timeout': valheim_idle_timeout_seconds | int,
-  'poll_seconds': valheim_idle_poll_seconds | int
+  'poll_seconds': valheim_idle_poll_seconds | int,
+  'query_address': valheim_game_bind_ip ~ ':' ~ ((valheim_server_port | int) + 1)
 } | to_nice_json }}

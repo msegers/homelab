@@ -4,6 +4,29 @@ Run on a backed-up/test world before relying on unattended shutdown. These check
 require the EliteDesk and real players; local regression tests cannot establish
 that a particular Valheim version reports its player count accurately.
 
+## Handoff status (2026-11-05)
+
+- Runtime tooling is now Rust in `tools/valheim/`: controller, systemd idle checker,
+  private dashboard, and Unix-socket broker. The Python controller and in-container
+  Python player query are gone. Python remains only in Ansible-related tests.
+- Local checks cover the Rust lifecycle/archive/idle logic, native UDP query
+  parsing, HTTP/Unix-socket API, UI behavior, rendered Compose/systemd units, and
+  Ansible provisioning. Commands are in [the development guide](../tools/valheim/README.md).
+  Static musl release binaries build locally; no live deployment was performed.
+  Result: **35 Rust + 20 Ansible + 5 UI tests passed**, none skipped; formatting,
+  Clippy, playbook syntax, rendered systemd verification, and diff checks passed.
+- The homelab host opts into the dashboard and one-hour idle shutdown. The role
+  defaults both off. Deploy the updated role, then use the
+  [SSH-tunnel instructions](valheim.md#private-dashboard).
+- No public route, Docker socket access for the web account, or frontend framework.
+  Backup/update/world-selection stay CLI-only. Existing save/selection/archive
+  formats are preserved; Ansible adds the native query address to control settings.
+- Next operator checks: verify dashboard units and the loopback-only listener,
+  open the page through SSH, exercise start/status/stop/restart, and verify other
+  services stay untouched. Gameplay/player detection still needs real clients;
+  disable idle shutdown while validating if not already verified. Backup/restore
+  and retirement checks below remain live acceptance tasks, not automated claims.
+
 ## Image and account checks
 
 The pinned image manifest is version **1.4.1**, source revision

@@ -1,4 +1,4 @@
 #!/bin/sh
 # Run with sudo; the controller uses the existing Docker Engine.
-exec /usr/bin/python3 /usr/local/libexec/homelab-valheim/control.py \
+exec /usr/local/libexec/homelab-valheim/valheim-control \
   --config {{ (valheim_state_dir ~ '/config.json') | quote }} "$@"

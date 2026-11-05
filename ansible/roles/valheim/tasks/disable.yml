@@ -1,4 +1,7 @@
 ---
+- name: Disable dashboard access before retiring the game
+  ansible.builtin.import_tasks: dashboard_disable.yml
+
 - name: Find installed Valheim timer units
   ansible.builtin.stat:
     path: "/etc/systemd/system/{{ item }}"
