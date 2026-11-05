@@ -9,7 +9,7 @@ use axum::{
     extract::{ConnectInfo, DefaultBodyLimit, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use ipnet::Ipv4Net;
@@ -39,6 +39,9 @@ pub enum Action {
     Start,
     Stop,
     Restart,
+    Worlds,
+    World,
+    Delete,
 }
 impl Action {
     fn name(self) -> &'static str {
@@ -47,6 +50,9 @@ impl Action {
             Self::Start => "start",
             Self::Stop => "stop",
             Self::Restart => "restart",
+            Self::Worlds => "worlds",
+            Self::World => "world",
+            Self::Delete => "delete-world",
         }
     }
 }
@@ -55,6 +61,32 @@ impl Action {
 #[serde(deny_unknown_fields)]
 pub struct Command {
     pub action: Action,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmation: Option<String>,
+}
+
+impl Command {
+    fn validate(&self) -> Result<()> {
+        let needs_world = matches!(self.action, Action::World | Action::Delete);
+        ensure!(
+            needs_world == self.world.is_some(),
+            "Unexpected or missing world name"
+        );
+        if let Some(world) = &self.world {
+            ensure!(crate::controller::valid_world(world), "Invalid world name");
+        }
+        if matches!(self.action, Action::Delete) {
+            ensure!(
+                self.confirmation == self.world,
+                "Type the world name to confirm deletion"
+            );
+        } else {
+            ensure!(self.confirmation.is_none(), "Unexpected confirmation");
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -104,6 +136,7 @@ pub struct WebState {
 pub struct Access {
     pub bind: Ipv4Addr,
     networks: Vec<Ipv4Net>,
+    hosts: Vec<String>,
 }
 
 impl Access {
@@ -127,7 +160,35 @@ impl Access {
             networks.iter().any(|network| network.contains(&bind)),
             "Allowed networks must include the dashboard bind address"
         );
-        Ok(Self { bind, networks })
+        Ok(Self {
+            bind,
+            networks,
+            hosts: Vec::new(),
+        })
+    }
+
+    pub fn with_hosts(mut self, hosts: Vec<String>) -> Result<Self> {
+        for host in &hosts {
+            ensure!(
+                host.len() <= 253
+                    && host.contains('.')
+                    && host.split('.').all(|label| {
+                        !label.is_empty()
+                            && label.len() <= 63
+                            && label.as_bytes()[0].is_ascii_alphanumeric()
+                            && label.as_bytes()[label.len() - 1].is_ascii_alphanumeric()
+                            && label
+                                .bytes()
+                                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                    }),
+                "Allowed hosts must be explicit DNS names without a scheme, port or wildcard"
+            );
+        }
+        self.hosts = hosts
+            .into_iter()
+            .map(|host| host.to_ascii_lowercase())
+            .collect();
+        Ok(self)
     }
 
     pub fn allows_peer(&self, peer: IpAddr) -> bool {
@@ -143,7 +204,12 @@ impl Access {
         let (name, port) = host
             .split_once(':')
             .map_or((host, None), |(name, port)| (name, Some(port)));
-        (matches!(name, "localhost" | "127.0.0.1") || name == self.bind.to_string())
+        (matches!(name, "localhost" | "127.0.0.1")
+            || name == self.bind.to_string()
+            || self
+                .hosts
+                .iter()
+                .any(|host| name.eq_ignore_ascii_case(host)))
             && port.is_none_or(|port| port.parse::<u16>().is_ok_and(|number| number > 0))
     }
 }
@@ -173,8 +239,9 @@ impl WebState {
 
 pub fn router(state: WebState) -> Router {
     Router::new()
+        .route("/", get(|| async { Redirect::temporary("/valheim") }))
         .route(
-            "/",
+            "/valheim",
             get(|| async {
                 (
                     [("content-type", "text/html; charset=utf-8")],
@@ -202,6 +269,7 @@ pub fn router(state: WebState) -> Router {
         )
         .route("/api/session", get(session))
         .route("/api/status", get(status))
+        .route("/api/worlds", get(worlds))
         .route("/api/action", post(action))
         .layer(DefaultBodyLimit::max(MAX_REQUEST as usize))
         .layer(middleware::from_fn_with_state(
@@ -266,6 +334,12 @@ async fn status(State(state): State<WebState>) -> Response {
         .response()
 }
 
+async fn worlds(State(state): State<WebState>) -> Response {
+    broker_request(&state.socket, Action::Worlds)
+        .await
+        .response()
+}
+
 async fn action(
     State(state): State<WebState>,
     headers: HeaderMap,
@@ -285,7 +359,7 @@ async fn action(
         .unwrap_or("");
     if origin != format!("http://{host}")
         || token != state.token
-        || matches!(command.action, Action::Status)
+        || matches!(command.action, Action::Status | Action::Worlds)
     {
         return (
             StatusCode::FORBIDDEN,
@@ -293,17 +367,32 @@ async fn action(
         )
             .into_response();
     }
-    broker_request(&state.socket, command.action)
-        .await
-        .response()
+    if let Err(error) = command.validate() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(Reply::failure(&error.to_string())),
+        )
+            .into_response();
+    }
+    broker_command(&state.socket, command).await.response()
 }
 
 pub async fn broker_request(path: &Path, action: Action) -> Reply {
+    broker_command(
+        path,
+        Command {
+            action,
+            world: None,
+            confirmation: None,
+        },
+    )
+    .await
+}
+
+pub async fn broker_command(path: &Path, command: Command) -> Reply {
     let result = timeout(Duration::from_secs(1200), async {
         let mut stream = UnixStream::connect(path).await?;
-        stream
-            .write_all(&serde_json::to_vec(&Command { action })?)
-            .await?;
+        stream.write_all(&serde_json::to_vec(&command)?).await?;
         stream.shutdown().await?;
         let mut bytes = Vec::new();
         stream
@@ -339,15 +428,27 @@ async fn handle_broker(
     let reply = if bytes.len() as u64 > MAX_REQUEST {
         Reply::failure("Request too large")
     } else if let Ok(command) = serde_json::from_slice::<Command>(&bytes) {
+        if let Err(error) = command.validate() {
+            stream
+                .write_all(&serde_json::to_vec(&Reply::failure(&error.to_string()))?)
+                .await?;
+            return Ok(());
+        }
         if let Ok(_guard) = operation.try_lock() {
             tokio::task::spawn_blocking(move || {
                 let result = Config::load(&config).and_then(|config| {
                     let engine = DockerEngine(config.clone());
-                    Controller { config, engine }.run(command.action.name(), None)
+                    Controller { config, engine }
+                        .run(command.action.name(), command.world.as_deref())
                 });
                 match result {
                     Ok(output) => {
-                        let value = if matches!(command.action, Action::Status) {
+                        let value = if matches!(command.action, Action::Worlds) {
+                            match serde_json::from_str::<Vec<String>>(&output) {
+                                Ok(worlds) => serde_json::json!(worlds),
+                                Err(_) => return Reply::failure("Invalid controller worlds"),
+                            }
+                        } else if matches!(command.action, Action::Status) {
                             match serde_json::from_str::<Value>(&output) {
                                 Ok(mut status) => {
                                     // Only intentionally exposed fields cross the privilege boundary.
@@ -362,6 +463,7 @@ async fn handle_broker(
                                                     | "running_world"
                                                     | "idle_enabled"
                                                     | "idle_timeout_seconds"
+                                                    | "pre_change_backups"
                                             )
                                         });
                                     }

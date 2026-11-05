@@ -86,6 +86,7 @@ fn fixture() -> (tempfile::TempDir, Controller<Fake>) {
         worlds_dir: root.join("saves"),
         config_dir: root.join("config"),
         backups_dir: root.join("backups"),
+        pre_change_backups: true,
         project_dir: root.join("stack"),
         stop_timeout: 120,
         query_address: "127.0.0.1:2457".parse().unwrap(),
@@ -117,6 +118,104 @@ fn fixture() -> (tempfile::TempDir, Controller<Fake>) {
 }
 fn tick(controller: &Controller<Fake>, now: u64) -> String {
     controller.idle_at(now as f64, 1_700_000_000.0 + now as f64, "boot-1")
+}
+
+#[test]
+fn world_changes_can_skip_automatic_backups_without_touching_other_saves() {
+    let (_tmp, mut controller) = fixture();
+    controller.config.pre_change_backups = false;
+    let saves = &controller.config.worlds_dir;
+    fs::write(saves.join("Home.db"), "home").unwrap();
+    fs::write(saves.join("Other.db"), "other").unwrap();
+    fs::write(saves.join("Other.fwl"), "metadata").unwrap();
+    fs::write(saves.join("Other_backup_auto-20261105.db"), "backup").unwrap();
+    fs::write(saves.join("Other2.db"), "unrelated").unwrap();
+    controller.select_world("NewWorld").unwrap();
+    assert_eq!(fs::read(saves.join("Home.db")).unwrap(), b"home");
+    assert!(controller.engine.info.borrow().as_ref().unwrap().running);
+    assert_eq!(
+        fs::read_dir(&controller.config.backups_dir)
+            .unwrap()
+            .count(),
+        0
+    );
+    assert!(controller.run("worlds", None).unwrap().contains("Other"));
+    // Fake engine must expose a known running world for deletion safety checks.
+    controller
+        .engine
+        .info
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .env
+        .insert("WORLD_NAME".into(), "NewWorld".into());
+    controller.run("delete-world", Some("Other")).unwrap();
+    assert!(!saves.join("Other.db").exists());
+    assert!(!saves.join("Other.fwl").exists());
+    assert!(saves.join("Other2.db").exists());
+    assert!(saves.join("Other_backup_auto-20261105.db").exists());
+    assert!(controller.engine.info.borrow().as_ref().unwrap().running);
+}
+
+#[test]
+fn deletion_refuses_selected_running_unknown_and_symlink_worlds() {
+    let (_tmp, controller) = fixture();
+    fs::write(controller.config.worlds_dir.join("Other.db"), "keep").unwrap();
+    assert!(controller.run("delete-world", Some("Home")).is_err());
+    assert!(controller.run("delete-world", Some("Other")).is_err()); // unknown live world
+    controller
+        .engine
+        .info
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .env
+        .insert("WORLD_NAME".into(), "Other".into());
+    assert!(controller.run("delete-world", Some("Other")).is_err());
+    controller
+        .engine
+        .info
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .running = false;
+    for name in ["../Other", "-flag", "", "Missing"] {
+        assert!(controller.run("delete-world", Some(name)).is_err());
+    }
+    std::os::unix::fs::symlink(
+        controller.config.worlds_dir.join("Other.db"),
+        controller.config.worlds_dir.join("Link.db"),
+    )
+    .unwrap();
+    assert!(controller.run("delete-world", Some("Link")).is_err());
+    assert!(controller.config.worlds_dir.join("Other.db").exists());
+}
+
+#[test]
+fn deletion_backs_up_first_and_aborts_if_backup_fails() {
+    let (_tmp, mut controller) = fixture();
+    controller
+        .engine
+        .info
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .running = false;
+    let save = controller.config.worlds_dir.join("Other.db");
+    fs::write(&save, "keep").unwrap();
+    let original = controller.config.backups_dir.clone();
+    controller.config.backups_dir = original.join("missing");
+    assert!(controller.run("delete-world", Some("Other")).is_err());
+    assert!(save.exists());
+    controller.config.backups_dir = original;
+    controller.run("delete-world", Some("Other")).unwrap();
+    assert!(!save.exists());
+    assert_eq!(
+        fs::read_dir(&controller.config.backups_dir)
+            .unwrap()
+            .count(),
+        1
+    );
 }
 fn prime(controller: &Controller<Fake>) {
     for now in (0..3600).step_by(60) {

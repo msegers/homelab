@@ -13,6 +13,9 @@ valheim_group: valheim-game
 valheim_config_dir: "{{ valheim_home }}/config"
 valheim_worlds_dir: "{{ valheim_home }}/saves"
 valheim_backups_dir: "{{ valheim_home }}/backups"
+# Manual backups remain available regardless of these switches.
+valheim_backups_enabled: true
+valheim_pre_change_backups: "{{ valheim_backups_enabled }}"
 valheim_data_dir: "{{ valheim_home }}/server"
 valheim_state_dir: "{{ valheim_home }}/control"
 valheim_required_mounts: []
@@ -41,3 +44,4 @@ valheim_dashboard_enabled: false
 valheim_dashboard_port: 8787
 valheim_dashboard_bind_ip: 127.0.0.1
 valheim_dashboard_allowed_networks: [127.0.0.0/8]
+valheim_dashboard_allowed_hosts: []

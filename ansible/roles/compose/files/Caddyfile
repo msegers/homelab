@@ -3,7 +3,7 @@
 }
 
 http://{$PIHOLE_DOMAIN} {
-	@lan remote_ip private_ranges
+	@lan remote_ip {$PIHOLE_ALLOWED_NETWORKS}
 	handle @lan {
 		reverse_proxy pihole:80
 	}

@@ -8,6 +8,11 @@ python3 -m unittest discover -s tests -v
 ```
 
 For a standalone Compose binary, set `COMPOSE_COMMAND=/path/to/docker-compose`.
+For the Pi-hole Caddy integration check, install Caddy or set
+`CADDY_COMMAND=/path/to/caddy` (otherwise that check is skipped). It validates the
+shipped proxy configuration and exercises its actual peer allowlist on ephemeral
+loopback listeners, including spoofed forwarding headers, with a harmless
+upstream fixture. It never contacts the real Pi-hole or requests certificates.
 These Python tests are tightly coupled to Ansible only: temporary provisioning,
 rendered Compose/systemd validation, opt-out, storage/secret handling, and the
 Ansible CLI wrapper. They never provision the real host. Runtime controller and

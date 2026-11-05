@@ -8,8 +8,11 @@ const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 async function page(options = {}) {
-  const ids = new Map(['running', 'game', 'players', 'world', 'idle', 'message']
-    .map(id => [id, { textContent: '', dataset: {} }]));
+  const ids = new Map(['running', 'game', 'players', 'world', 'idle', 'message', 'running-world', 'backup-policy', 'saved-world', 'new-world', 'select-world', 'delete-world', 'create-world']
+    .map(id => [id, { textContent: '', dataset: {}, value: '', disabled: true,
+      replaceChildren(...children) { this.children = children; this.value = children[0]?.value || ''; },
+      addEventListener(name, handler) { this[name] = handler; },
+    }]));
   const buttons = ['start', 'stop', 'restart'].map(action => ({
     dataset: { action }, disabled: true,
     addEventListener(_name, handler) { this.click = handler; },
@@ -20,17 +23,24 @@ async function page(options = {}) {
     document: {
       querySelectorAll: () => buttons,
       getElementById: id => ids.get(id),
+      createElement: () => ({ value: '', textContent: '' }),
     },
     confirm: () => options.confirm !== false,
+    prompt: () => options.confirmation ?? null,
     setInterval: callback => { poll = callback; },
     fetch: async (path, init) => {
       requests.push({ path, init });
       if (path === '/api/session') return { ok: true, json: async () => ({ token: 'csrf-token' }) };
+      if (path === '/api/worlds') {
+        if (options.worldsUnavailable) return { ok: false, status: 503, json: async () => ({ ok: false, error: 'World list unavailable' }) };
+        return { ok: true, json: async () => ({ ok: true, result: ['Home', 'Other'] }) };
+      }
       if (path === '/api/status') {
         if (options.unavailable) return { ok: false, status: 503, json: async () => ({ ok: false, error: 'Helper unavailable' }) };
         return { ok: true, json: async () => ({ ok: true, result: {
           running: options.running ?? false, game_state: 'RUNNING', players: options.players ?? 0,
-          selected_world: '<script>not markup</script>', idle_enabled: true, idle_timeout_seconds: 3600,
+          selected_world: options.selectedWorld ?? '<script>not markup</script>', idle_enabled: true, idle_timeout_seconds: 3600,
+          pre_change_backups: options.backups ?? true,
         } }) };
       }
       if (options.actionWait) await options.actionWait;
@@ -75,6 +85,15 @@ test('unavailable status disables all controls', async () => {
   assert.ok(buttons.every(button => button.disabled));
 });
 
+test('unavailable world list preserves its error and disables only world controls', async () => {
+  const { ids, buttons } = await page({ worldsUnavailable: true });
+  assert.equal(ids.get('message').textContent, 'World list unavailable');
+  assert.equal(buttons[0].disabled, false);
+  for (const id of ['saved-world', 'new-world', 'create-world', 'select-world', 'delete-world']) {
+    assert.equal(ids.get(id).disabled, true);
+  }
+});
+
 test('long operations disable controls and pause polling until completion', async () => {
   let finish;
   const actionWait = new Promise(resolve => { finish = resolve; });
@@ -88,4 +107,40 @@ test('long operations disable controls and pause polling until completion', asyn
   finish();
   await pending;
   assert.equal(buttons[0].disabled, false);
+});
+
+test('world selection sends a named action only after confirmation', async () => {
+  const { ids, requests } = await page({ selectedWorld: 'Home' });
+  ids.get('saved-world').value = 'Other';
+  ids.get('saved-world').change();
+  assert.equal(ids.get('delete-world').disabled, false);
+  await ids.get('select-world').click();
+  const request = requests.find(request => request.path === '/api/action');
+  assert.deepEqual(JSON.parse(request.init.body), { action: 'world', world: 'Other' });
+});
+
+test('new worlds validate names and canceled switches do nothing', async () => {
+  const { ids, requests } = await page({ confirm: false });
+  ids.get('new-world').value = '../escape';
+  await ids.get('create-world').click();
+  assert.match(ids.get('message').textContent, /Enter a world name/);
+  ids.get('new-world').value = 'NewWorld';
+  await ids.get('create-world').click();
+  assert.ok(!requests.some(request => request.path === '/api/action'));
+});
+
+test('deletion requires exact typed confirmation and warns when backups are off', async () => {
+  for (const confirmation of ['wrong', 'Other']) {
+    const { ids, requests } = await page({ selectedWorld: 'Home', backups: false, confirmation });
+    assert.match(ids.get('backup-policy').textContent, /OFF/);
+    assert.equal(ids.get('delete-world').disabled, true);
+    ids.get('saved-world').value = 'Other';
+    await ids.get('delete-world').click();
+    const request = requests.find(request => request.path === '/api/action');
+    if (confirmation === 'Other') {
+      assert.deepEqual(JSON.parse(request.init.body), { action: 'delete', world: 'Other', confirmation: 'Other' });
+    } else {
+      assert.equal(request, undefined);
+    }
+  }
 });

@@ -11,6 +11,7 @@ services:
       WEBSITE_DOMAIN: {{ compose_website_domain | to_json | replace('$', '$$') }}
       WEBSITE_WWW_DOMAIN: {{ compose_website_www_domain | to_json | replace('$', '$$') }}
       PIHOLE_DOMAIN: {{ compose_pihole_domain | to_json | replace('$', '$$') }}
+      PIHOLE_ALLOWED_NETWORKS: {{ compose_pihole_allowed_networks | join(' ') | to_json | replace('$', '$$') }}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -34,6 +35,9 @@ services:
       FTLCONF_webserver_api_password: {{ compose_pihole_password | to_json | replace('$', '$$') }}
       FTLCONF_dns_listeningMode: ALL
       FTLCONF_dns_upstreams: {{ compose_pihole_upstreams | to_json | replace('$', '$$') }}
+{% if compose_pihole_local_hosts is not none %}
+      FTLCONF_dns_hosts: {{ compose_pihole_local_hosts | join(';') | to_json | replace('$', '$$') }}
+{% endif %}
     volumes:
       - pihole_data:/etc/pihole
 

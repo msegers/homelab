@@ -37,7 +37,7 @@ services:
       WORLDS_FILE_PERMISSIONS: "600"
       BACKUPS_DIRECTORY_PERMISSIONS: "700"
       BACKUPS_FILE_PERMISSIONS: "600"
-      BACKUPS: "true"
+      BACKUPS: {{ ((valheim_backups_enabled | bool) | ternary('true', 'false')) | to_json }}
       BACKUPS_CRON: "0 * * * *"
       BACKUPS_MAX_AGE: "14"
       BACKUPS_MAX_COUNT: "48"

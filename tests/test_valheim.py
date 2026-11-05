@@ -114,6 +114,7 @@ class ProvisionTests(unittest.TestCase):
     def test_selected_world_and_idle_state_survive_ansible(self):
         self.run_role()
         self.assertFalse(self.config()["idle_enabled"])
+        self.assertTrue(self.config()["pre_change_backups"])
         state = self.root / "home/control"
         (state / "world.json").write_text('{"world":"ChosenThroughScript"}')
         (state / "idle.json").write_text('{"example":"untouched"}')
@@ -132,6 +133,9 @@ class ProvisionTests(unittest.TestCase):
         self.assertIs(self.config()["idle_enabled"], True)
         self.assertEqual(self.config()["idle_timeout"], 3600)
         self.assertEqual(self.config()["query_address"], "192.168.68.111:2457")
+        self.assertFalse(self.config()["pre_change_backups"])
+        rendered = yaml.safe_load((self.project / "docker-compose.yml").read_text())
+        self.assertEqual(rendered["services"]["valheim"]["environment"]["BACKUPS"], "false")
 
     def test_compose_profiles_ports_paths_and_literal_secrets(self):
         self.variables.update(valheim_server_port=30000, valheim_worlds_dir=str(self.root / "storage/saves"), valheim_backups_dir=str(self.root / "storage/backups"))

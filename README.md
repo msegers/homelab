@@ -21,6 +21,7 @@ ansible-playbook site.yml --ask-vault-pass
 
 [Optional Valheim server and control scripts](docs/valheim.md).
 [Private Valheim dashboard](docs/valheim.md#private-dashboard) ·
+[Home Tools and LAN DNS](docs/home-tools.md) ·
 [Rust source and development](tools/valheim/README.md).
 
 Originally inspired by [Saura Sahu's homelab](https://github.com/mrsauravsahu/kube-homelab).

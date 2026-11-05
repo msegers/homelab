@@ -8,18 +8,22 @@ Deploy using the [Ansible setup guide](../ansible/README.md). The stack lives in
 | Service | Address |
 | --- | --- |
 | Website | `https://mathijs.se` and `https://www.mathijs.se` |
-| Pi-hole admin | `http://dns.192.168.68.111.nip.io/admin/` |
+| Pi-hole admin (LAN only, after deployment/local DNS setup) | `http://pihole.mathijs.se/admin/` |
 | Pi-hole DNS | `192.168.68.111:53` (TCP and UDP) |
 
 Ports bind to `compose_bind_ip` in the host variables. Caddy redirects website
-HTTP to HTTPS and restricts Pi-hole admin to private source addresses. Use the
+HTTP to HTTPS and restricts Pi-hole admin to the explicit
+`compose_pihole_allowed_networks` TCP-peer allowlist (`192.168.68.0/24` for this
+host; loopback-only in reusable defaults). Forwarding headers are not trusted. Use the
 admin interface over a trusted LAN or SSH tunnel, and keep DNS port 53 LAN-only.
 Review router forwarding and Docker-aware firewall rules, especially if another
 proxy rewrites client addresses.
 
 For LAN testing, point the website domains at the bind IP using local DNS or a
-hosts file. If your resolver blocks `nip.io`, configure a local Pi-hole hostname
-and set `compose_pihole_domain` accordingly.
+hosts file. The homelab now configures `compose_pihole_domain: pihole.mathijs.se`
+and its local DNS record; reusable defaults retain the old `nip.io` name. See
+[Pi-hole first use](home-tools.md#pi-hole-first-use) to test without changing
+your router's DNS settings. No live deployment has been performed by these changes.
 
 ## HTTPS and public cutover
 

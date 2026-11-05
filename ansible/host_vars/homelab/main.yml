@@ -3,10 +3,20 @@
 # vault.yml, created with ansible-vault (see ansible/README.md).
 compose_bind_ip: 192.168.68.111
 compose_pihole_password: "{{ vault_compose_pihole_password }}"
+compose_pihole_domain: pihole.mathijs.se
+compose_pihole_allowed_networks: [192.168.68.0/24]
+# Inventory owns the full local-hosts list. Import any manual Pi-hole records
+# before deploying; LAN clients must use Pi-hole to resolve these names.
+compose_pihole_local_hosts:
+  - "{{ compose_bind_ip }} lan.mathijs.se"
+  - "{{ compose_bind_ip }} pihole.mathijs.se"
 
 valheim_enabled: true
+# Enable once backup storage (NAS) is ready. Deletion is irreversible meanwhile.
+valheim_backups_enabled: false
 valheim_idle_shutdown_enabled: true
 valheim_idle_timeout_seconds: 3600
 valheim_dashboard_enabled: true
 valheim_dashboard_bind_ip: "{{ compose_bind_ip }}"
 valheim_dashboard_allowed_networks: [192.168.68.0/24]
+valheim_dashboard_allowed_hosts: [lan.mathijs.se]

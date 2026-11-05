@@ -15,6 +15,34 @@
     fail_msg: Set compose_pihole_password in host_vars (Ansible Vault recommended).
   no_log: true
 
+- name: Require explicit Pi-hole admin client networks
+  ansible.builtin.assert:
+    that:
+      - compose_pihole_allowed_networks is sequence and compose_pihole_allowed_networks is not string
+      - compose_pihole_allowed_networks | length > 0
+
+- name: Validate private Pi-hole admin network arguments
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item is match('^(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/(8|9|[12][0-9]|3[0-2])|192\.168\.[0-9]{1,3}\.[0-9]{1,3}/(1[6-9]|2[0-9]|3[0-2])|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}/(1[2-9]|2[0-9]|3[0-2])|127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/(8|9|[12][0-9]|3[0-2]))$')
+    fail_msg: Use explicit RFC1918 or loopback IPv4 CIDRs, never public or wildcard ranges.
+  loop: "{{ compose_pihole_allowed_networks }}"
+
+- name: Validate local DNS record ownership setting
+  ansible.builtin.assert:
+    that:
+      - compose_pihole_local_hosts is sequence and compose_pihole_local_hosts is not string
+    fail_msg: Set compose_pihole_local_hosts to null (unmanaged) or the complete list of local IPv4 host records.
+  when: compose_pihole_local_hosts is not none
+
+- name: Validate local DNS records
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item is match('^(?:[0-9]{1,3}\.){3}[0-9]{1,3} [A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$')
+  loop: "{{ compose_pihole_local_hosts | default([], true) }}"
+
 - name: Create stack directory
   ansible.builtin.file:
     path: "{{ compose_project_dir }}"
