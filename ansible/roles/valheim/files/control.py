@@ -59,15 +59,15 @@ class Controller:
         return selected
 
     def docker(self, *args, timeout=30, check=True, environment=None):
-        command = ["/usr/bin/docker", "--host", "unix://" + self.config["socket"], *args]
+        command = ["/usr/bin/docker", "--context", "default", *args]
         try:
             result = subprocess.run(command, text=True, capture_output=True,
                                     timeout=timeout, env=environment, cwd=self.config["project_dir"])
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise ControlError("Private Docker command failed/timed out") from exc
+            raise ControlError("Docker command failed/timed out") from exc
         if check and result.returncode:
             # Do not leak captured inspect/config output, which can contain secrets.
-            raise ControlError("Private Docker operation failed; check daemon/container logs")
+            raise ControlError("Docker operation failed; check daemon/container logs")
         return result
 
     def compose(self, *args, timeout=300):
@@ -84,8 +84,13 @@ class Controller:
         if result.returncode:
             if "No such object" in result.stderr or "No such container" in result.stderr:
                 return None
-            raise ControlError("Private Docker daemon unavailable")
-        return json.loads(result.stdout)[0]
+            raise ControlError("Docker Engine unavailable")
+        info = json.loads(result.stdout)[0]
+        labels = info.get("Config", {}).get("Labels") or {}
+        if (labels.get("com.docker.compose.project") != self.config["project_name"]
+                or labels.get("com.docker.compose.service") != "valheim"):
+            raise ControlError("Container name belongs to another project/service; refusing to control it")
+        return info
 
     def running(self):
         info = self.inspect()
@@ -95,6 +100,7 @@ class Controller:
         self.idle_file.unlink(missing_ok=True)
 
     def start(self, recreate=False):
+        self.inspect()  # Refuse a conflicting container owned by another project.
         # Freeze the selected world on first start, independently of future
         # Ansible default changes. Only the explicit world command changes it.
         save_json(self.world_file, {"world": self.world()})

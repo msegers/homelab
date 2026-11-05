@@ -7,8 +7,8 @@
       - valheim_project_dir not in ['/', '/opt', '/opt/homelab']
       - valheim_game_bind_ip in ansible_all_ipv4_addresses
       - 1024 <= valheim_server_port | int <= 65533
-      - valheim_account.uid | int > 0
-      - valheim_account.group | int > 0
+      - valheim_uid | int > 0
+      - valheim_gid | int > 0
       - valheim_world_name is match('^[A-Za-z0-9_][A-Za-z0-9_-]*$')
       - valheim_server_name is string
       - valheim_server_name | length > 0
@@ -38,14 +38,20 @@
       - not valheim_worlds_dir.startswith(valheim_backups_dir.rstrip('/') ~ '/')
     fail_msg: Saves and backups must be separate, non-nested directories.
 
-- name: Keep controller state and Docker runtime out of game mounts
+- name: Keep administrative files and Docker sockets out of game mounts
   ansible.builtin.assert:
     that:
-      - valheim_state_dir != item
-      - not valheim_state_dir.startswith(item.rstrip('/') ~ '/')
-      - valheim_runtime_dir != item
-      - not valheim_runtime_dir.startswith(item.rstrip('/') ~ '/')
-    fail_msg: Game storage must not expose the controller directory or private Docker socket.
+      - protected | select('equalto', item) | list | length == 0
+      - protected | select('match', '^' ~ (item.rstrip('/') | regex_escape) ~ '/') | list | length == 0
+    fail_msg: Game storage must not expose administrative files or Docker sockets.
+  vars:
+    protected:
+      - "{{ valheim_state_dir }}"
+      - "{{ valheim_project_dir }}"
+      - /run/docker.sock
+      - /var/run/docker.sock
+      - /usr/local/libexec/homelab-valheim
+      - /usr/local/sbin/valheimctl
   loop:
     - "{{ valheim_config_dir }}"
     - "{{ valheim_worlds_dir }}"
@@ -59,19 +65,6 @@
   changed_when: false
   check_mode: false
 
-- name: Check the private Docker socket
-  ansible.builtin.stat:
-    path: "{{ valheim_docker_socket }}"
-  register: valheim_socket
-
-- name: Require the dedicated user's Docker socket
-  ansible.builtin.assert:
-    that:
-      - valheim_socket.stat.exists
-      - valheim_socket.stat.issock
-      - valheim_socket.stat.uid == valheim_account.uid
-    fail_msg: Valheim requires its dedicated user's rootless Docker socket.
-
 - name: Validate game password
   ansible.builtin.assert:
     that:
@@ -81,20 +74,30 @@
     fail_msg: Set vault_valheim_server_password to a password of 5+ characters without newlines.
   no_log: true
 
-- name: Create private runtime and storage directories
+- name: Create root-owned administrative directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ valheim_account.uid }}"
-    group: "{{ valheim_account.group }}"
+    owner: root
+    group: root
     mode: "0700"
   loop:
+    - "{{ valheim_home }}"
     - "{{ valheim_project_dir }}"
+    - "{{ valheim_state_dir }}"
+
+- name: Create persistent game storage directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ valheim_uid }}"
+    group: "{{ valheim_gid }}"
+    mode: "0700"
+  loop:
     - "{{ valheim_config_dir }}"
     - "{{ valheim_worlds_dir }}"
     - "{{ valheim_backups_dir }}"
     - "{{ valheim_data_dir }}"
-    - "{{ valheim_state_dir }}"
 
 # Rendering configuration deliberately does not run Compose. A stopped game
 # stays stopped, and running games change only on an explicit user command.
@@ -102,8 +105,8 @@
   ansible.builtin.template:
     src: docker-compose.yml.j2
     dest: "{{ valheim_project_dir }}/docker-compose.yml"
-    owner: "{{ valheim_account.uid }}"
-    group: "{{ valheim_account.group }}"
+    owner: root
+    group: root
     mode: "0600"
   no_log: true
 
@@ -111,6 +114,6 @@
   ansible.builtin.template:
     src: control.json.j2
     dest: "{{ valheim_state_dir }}/config.json"
-    owner: "{{ valheim_account.uid }}"
-    group: "{{ valheim_account.group }}"
+    owner: root
+    group: root
     mode: "0600"

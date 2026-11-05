@@ -1,7 +1,4 @@
 #!/bin/sh
-# Administrative convenience: always drop to the dedicated account/private engine.
-exec /usr/sbin/runuser -u {{ valheim_user | quote }} -- /usr/bin/env \
-  HOME={{ valheim_home | quote }} \
-  XDG_RUNTIME_DIR={{ valheim_runtime_dir | quote }} \
-  /usr/bin/python3 /usr/local/libexec/homelab-valheim/control.py \
+# Run with sudo; the controller uses the existing Docker Engine.
+exec /usr/bin/python3 /usr/local/libexec/homelab-valheim/control.py \
   --config {{ (valheim_state_dir ~ '/config.json') | quote }} "$@"

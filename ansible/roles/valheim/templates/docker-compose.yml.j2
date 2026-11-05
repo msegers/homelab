@@ -6,6 +6,9 @@ services:
     container_name: valheim-server
     profiles: [game]
     restart: "no"
+    privileged: false
+    security_opt:
+      - no-new-privileges:true
     stop_grace_period: {{ valheim_stop_timeout }}s
     ports:
       - {{ (valheim_game_bind_ip ~ ':' ~ valheim_server_port ~ '-' ~ ((valheim_server_port | int) + 2) ~ ':' ~ valheim_server_port ~ '-' ~ ((valheim_server_port | int) + 2) ~ '/udp') | to_json }}
@@ -23,9 +26,8 @@ services:
       CROSSPLAY: {{ ((valheim_crossplay | bool) | ternary('true', 'false')) | to_json }}
       BEPINEX: "false"
       TZ: {{ valheim_timezone | to_json }}
-      # Container root maps to the dedicated, unprivileged host account.
-      PUID: "0"
-      PGID: "0"
+      PUID: {{ (valheim_uid | string) | to_json }}
+      PGID: {{ (valheim_gid | string) | to_json }}
       BACKUPS: "true"
       BACKUPS_CRON: "0 * * * *"
       BACKUPS_MAX_AGE: "14"

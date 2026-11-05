@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import shlex
 import shutil
-import socket
 import subprocess
 import sys
 import tarfile
@@ -32,9 +31,6 @@ class ProvisionTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.project = self.root / "project"
-        self.sock = socket.socket(socket.AF_UNIX)
-        self.sock.bind(str(self.root / "docker.sock"))
-        self.addCleanup(self.sock.close)
         self.password = "S3cret-${literal}-$money-'quote'-back\\slash#"
         self.variables = {
             "ansible_architecture": "x86_64",
@@ -44,15 +40,27 @@ class ProvisionTests(unittest.TestCase):
             "valheim_home": str(self.root / "home"),
             "valheim_project_dir": str(self.project),
             "valheim_game_bind_ip": "192.168.68.111",
-            "valheim_docker_socket": str(self.root / "docker.sock"),
-            "valheim_account": {"uid": os.getuid() or 1000, "group": os.getgid() or 1000},
+            "valheim_uid": os.getuid() or 1000,
+            "valheim_gid": os.getgid() or 1000,
             "vault_valheim_server_password": self.password,
         }
 
     def run_role(self, tasks_from="provision", expect_success=True):
-        play = [{"hosts": "localhost", "gather_facts": False, "vars": self.variables,
-                 "tasks": [{"ansible.builtin.include_role": {
-                     "name": "valheim", "tasks_from": tasks_from}}]}]
+        variables = self.variables
+        tasks = [{"ansible.builtin.include_role": {"name": "valheim", "tasks_from": tasks_from}}]
+        if tasks_from == "provision":
+            variables = yaml.safe_load((ROLE / "defaults/main.yml").read_text()) | self.variables
+            tasks = yaml.safe_load((ROLE / "tasks/provision.yml").read_text())
+            # Exercise the production rendering without requiring root on the
+            # test machine. Root ownership policy is asserted separately below.
+            for task in tasks:
+                for module in ["ansible.builtin.file", "ansible.builtin.template"]:
+                    if module in task:
+                        task[module]["owner"] = str(os.getuid())
+                        task[module]["group"] = str(os.getgid())
+                if "ansible.builtin.template" in task:
+                    task["ansible.builtin.template"]["src"] = str(ROLE / "templates" / task["ansible.builtin.template"]["src"])
+        play = [{"hosts": "localhost", "gather_facts": False, "vars": variables, "tasks": tasks}]
         path = self.root / "play.yml"
         path.write_text(yaml.safe_dump(play))
         result = subprocess.run(
@@ -81,13 +89,13 @@ class ProvisionTests(unittest.TestCase):
     def test_disabled_default_needs_no_secret_or_docker(self):
         self.variables.pop("valheim_enabled")
         self.variables.pop("vault_valheim_server_password")
-        self.variables["valheim_docker_socket"] = str(self.root / "absent.sock")
         self.run_role("main")
         self.assertFalse(self.project.exists())
 
     def test_selected_world_and_idle_state_survive_ansible(self):
         self.run_role()
         config = json.loads((self.root / "home/control/config.json").read_text())
+        self.assertNotIn("socket", config)
         controller = control.Controller(config)
         control.save_json(controller.world_file, {"world": "ChosenThroughScript"})
         control.save_json(controller.idle_file, {"example": "untouched"})
@@ -107,6 +115,12 @@ class ProvisionTests(unittest.TestCase):
         self.assertEqual(set(full["services"]), {"valheim"})
         game = full["services"]["valheim"]
         self.assertEqual(game["restart"], "no")
+        self.assertIs(game.get("privileged", False), False)
+        self.assertIn("privileged: false", (self.project / "docker-compose.yml").read_text())
+        self.assertIn("no-new-privileges:true", game["security_opt"])
+        self.assertEqual(game.get("cap_add", []), [])
+        self.assertEqual(game["environment"]["PUID"], str(self.variables["valheim_uid"]))
+        self.assertEqual(game["environment"]["PGID"], str(self.variables["valheim_gid"]))
         self.assertEqual({p["target"] for p in game["ports"]}, {30000, 30001, 30002})
         self.assertTrue(all(p["protocol"] == "udp" and p["host_ip"] == "192.168.68.111" for p in game["ports"]))
         self.assertEqual(game["environment"]["SERVER_PASS"].replace("$$", "$"), self.password)
@@ -118,10 +132,12 @@ class ProvisionTests(unittest.TestCase):
         self.assertEqual(mounts["/config/backups"], str(self.root / "storage/backups"))
         self.assertFalse(any("docker.sock" in value for value in mounts.values()))
 
-    def test_other_users_socket_is_rejected(self):
-        self.variables["valheim_account"]["uid"] += 1
-        self.run_role(expect_success=False)
-        self.assertFalse(self.project.exists())
+    def test_game_mount_cannot_expose_administrative_files(self):
+        for directory in [str(self.project), "/var/run", "/run"]:
+            with self.subTest(directory=directory):
+                self.variables["valheim_config_dir"] = directory
+                self.run_role(expect_success=False)
+                self.assertFalse(self.project.exists())
 
     def test_required_storage_mount_must_exist(self):
         self.variables["valheim_required_mounts"] = [str(self.root)]
@@ -134,16 +150,22 @@ class ProvisionTests(unittest.TestCase):
             self.assertNotIn("docker_compose_v2", text)
             self.assertNotIn("valheimctl start", text)
 
-    def test_rootless_account_and_user_scoped_docker_service(self):
-        tasks = yaml.safe_load((ROLE / "tasks/rootless.yml").read_text())
-        account = next(t["ansible.builtin.user"] for t in tasks if "ansible.builtin.user" in t)
-        self.assertEqual(account["groups"], "")
-        self.assertEqual(account["shell"], "/usr/sbin/nologin")
-        block = next(t for t in tasks if t.get("become_user") == "{{ valheim_user }}")
-        service = next(t["ansible.builtin.systemd_service"] for t in block["block"]
-                       if "ansible.builtin.systemd_service" in t)
-        self.assertEqual(service["scope"], "user")
-        self.assertTrue(any("name=rootless" in str(t) for t in block["block"]))
+    def test_system_timer_and_root_owned_control_files_without_extra_daemon(self):
+        self.assertFalse((ROLE / "tasks/rootless.yml").exists())
+        for path in (ROLE / "tasks").glob("*.yml"):
+            text = path.read_text()
+            self.assertNotIn("ansible.builtin.user:", text)
+            self.assertNotIn("ansible.builtin.apt:", text)
+            self.assertNotIn("scope: user", text)
+        tasks = yaml.safe_load((ROLE / "tasks/idle_timer.yml").read_text())
+        unit = tasks[0]["ansible.builtin.template"]
+        self.assertEqual(unit["dest"], "/etc/systemd/system/{{ item }}")
+        self.assertEqual(unit["owner"], "root")
+        self.assertNotIn("scope", tasks[1]["ansible.builtin.systemd_service"])
+        for task in yaml.safe_load((ROLE / "tasks/provision.yml").read_text()):
+            if "ansible.builtin.template" in task:
+                self.assertEqual(task["ansible.builtin.template"]["owner"], "root")
+                self.assertEqual(task["ansible.builtin.template"]["mode"], "0600")
 
 
 class FakeController(control.Controller):
@@ -187,7 +209,7 @@ class ControllerTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
         self.config = {"state_dir": str(root), "default_world": "Home", "idle_enabled": True,
-                       "container": "valheim-server",
+                       "container": "valheim-server", "project_name": "homelab-valheim",
                        "poll_seconds": 60, "idle_timeout": 3600, "worlds_dir": str(root / "saves"),
                        "config_dir": str(root / "config"), "backups_dir": str(root / "backups"),
                        "project_dir": str(root / "stack"), "stop_timeout": 120}
@@ -304,6 +326,32 @@ class ControllerTests(unittest.TestCase):
         self.controller.backup()
         self.assertEqual(self.controller.stops, 1)
         self.assertEqual(self.controller.starts, 1)
+
+    def test_docker_uses_existing_engine_and_compose_targets_only_valheim(self):
+        with patch.object(control.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+            control.Controller.docker(self.controller, "version")
+        self.assertEqual(run.call_args.args[0], ["/usr/bin/docker", "--context", "default", "version"])
+        with patch.object(self.controller, "docker") as docker:
+            control.Controller.compose(self.controller, "up", "-d", "--no-deps", "valheim")
+        args = docker.call_args.args
+        self.assertEqual(args[-4:], ("up", "-d", "--no-deps", "valheim"))
+        self.assertIn("homelab-valheim", args)
+        self.assertIn(str(Path(self.config["project_dir"]) / "docker-compose.yml"), args)
+
+    def test_refuses_to_control_container_from_another_compose_project_or_service(self):
+        controller = control.Controller(self.config)
+        for project, service in [("homelab", "proxy"), ("homelab", "pihole"),
+                                 ("homelab", "website"), ("homelab-valheim", "other")]:
+            info = {"Config": {"Labels": {"com.docker.compose.project": project,
+                                          "com.docker.compose.service": service}},
+                    "State": {"Running": True}}
+            for action in ["start", "stop"]:
+                with self.subTest(project=project, service=service, action=action), patch.object(
+                        controller, "docker", return_value=SimpleNamespace(returncode=0, stdout=json.dumps([info]))) as docker:
+                    with self.assertRaises(control.ControlError):
+                        getattr(controller, action)()
+                    self.assertEqual(docker.call_args.args, ("inspect", "valheim-server"))
+                    self.assertEqual(docker.call_count, 1)
 
 
 class WrapperTests(unittest.TestCase):

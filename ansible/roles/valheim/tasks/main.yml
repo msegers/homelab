@@ -1,6 +1,9 @@
 ---
-- name: Set up the dedicated rootless Docker daemon
-  ansible.builtin.import_tasks: rootless.yml
+- name: Check the existing Docker Engine
+  ansible.builtin.command:
+    argv: [docker, --context, default, info, --format, "{{ '{{.ServerVersion}}' }}"]
+  changed_when: false
+  check_mode: false
   when: valheim_enabled | bool
 
 - name: Configure optional Valheim installation

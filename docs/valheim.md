@@ -1,7 +1,7 @@
 # Optional Valheim server
 
-A dedicated rootless Docker daemon runs Valheim. Ansible configures it;
-scripts control it over SSH. A systemd timer stops the game after an hour empty.
+Valheim uses the EliteDesk's existing Docker Engine, in its own Compose project.
+Scripts control it over SSH; a systemd timer stops it after an hour empty.
 
 ## Enable and choose storage
 
@@ -21,9 +21,10 @@ valheim_idle_shutdown_enabled: true
 valheim_idle_timeout_seconds: 3600
 ```
 
-Use dedicated directories: Ansible assigns them to the `homelab-valheim` account
-with mode 0700. For NAS storage, mount it first and ensure it supports that UID's
-ownership/permissions. Set `valheim_required_mounts: [/mnt/nas]` to fail safely if
+Use dedicated directories: Ansible assigns game storage to `valheim_uid` and
+`valheim_gid` (both default to 1000), with mode 0700. For NAS storage, mount it
+first and ensure it supports that UID's ownership/permissions.
+Set `valheim_required_mounts: [/mnt/nas]` to fail safely if
 your required mount is missing. Existing NAS mount configuration stays as-is.
 
 Add `vault_valheim_server_password: 'YOUR_GAME_PASSWORD'` (5+ characters) using:
@@ -71,12 +72,12 @@ does not start or restart the game during provisioning. The server stays stopped
 after host reboots too.
 
 For storage moves: stop the game, copy saves/backups preserving ownership, update
-the variables, rerun provisioning, then start it. The dedicated UID is available
-with `id -u homelab-valheim` on the server.
+the variables, rerun provisioning, then start it. Set `valheim_uid`/`valheim_gid`
+to match existing saves' ownership, or adjust ownership before starting.
 
 ## Automatic shutdown
 
-The dedicated account's **`valheim-idle.timer`** checks every 60 seconds. After
+The system-wide **`valheim-idle.timer`** checks every 60 seconds. After
 3600 seconds of confirmed zero-player readings, it gracefully stops the game
 container (120-second save/shutdown allowance).
 
@@ -94,7 +95,8 @@ container (120-second save/shutdown allowance).
 On the server, inspect the timer's logs or control it directly:
 
 ```bash
-sudo journalctl _SYSTEMD_USER_UNIT=valheim-idle.service -n 30
+sudo systemctl status valheim-idle.timer
+sudo journalctl -u valheim-idle.service -n 30
 sudo valheimctl status
 ```
 
@@ -118,32 +120,30 @@ The game image also keeps hourly world backups while recently active, capped at
 if already running. Steam game binaries update on startup. To change the image
 version, override `valheim_server_image`, reprovision, then run `update`.
 
-For restores, stop the game first. Inspect/extract a trusted archive as the
-dedicated account; restore `saves/` and `config/` to their configured paths and
+For restores, stop the game first. Inspect/extract a trusted archive; restore
+`saves/` and `config/` to their configured paths and
 `world.json` to `/var/lib/homelab-valheim/control/`. Preserve ownership and test
 the restored world before discarding old backups. Reprovision to regenerate
 Compose configuration for the current paths/secrets.
 
-## Isolation and idle overhead
+## Permissions and lifecycle
 
-The locked `homelab-valheim` account owns a separate Docker daemon and has no
-main-Docker/sudo supplementary groups. The game receives **no Docker socket**.
-Container root maps to this unprivileged host account; this shares the host
-kernel and is weaker isolation than a VM. Protect private host/NAS files using
-normal filesystem permissions. Existing website/Pi-hole/NAS services keep their
-own daemon and configuration.
+The image initializes permissions as container root, then runs the game using
+the configured non-root UID/GID. Privileged mode is disabled, no extra
+capabilities are added, and **no Docker socket is mounted**. Compose and control
+files stay root-owned; administration uses sudo on the host.
 
-After stopping the game, measure the daemon/timer's actual idle footprint:
+Valheim has its own project, persistent bind mounts, and `restart: "no"` policy.
+Commands explicitly target its service/container and verify Compose ownership.
+They leave Caddy, Pi-hole, and mathijs.se running. The idle timer runs a short
+check once per minute; there is no additional Docker daemon to keep idle.
 
-```bash
-uid=$(id -u homelab-valheim)
-sudo systemctl show user@$uid.service -p MemoryCurrent -p CPUUsageNSec
-```
+To retire Valheim, stop the game, set `valheim_enabled: false`, and run
+`sudo systemctl disable --now valheim-idle.timer`. Preserve the storage folders.
 
-CPUUsageNSec is cumulative; compare readings over an idle interval. Memory also
-includes filesystem cache. To retire the installation, stop the game, set
-`valheim_enabled: false`, and stop/disable its Docker user service and timer;
-preserve the storage directories for recovery.
+If you deployed the earlier rootless preview, stop its game/timer before
+switching engines, back up the saves, and preserve/adjust their numeric ownership.
+Retire that old user daemon manually after verifying the backup; this playbook
+does not delete previous users, daemons, or world data.
 
-References: [maintained Valheim image](https://github.com/community-valheim-tools/valheim-server-docker)
-and [Docker rootless setup](https://docs.docker.com/engine/security/rootless/).
+Reference: [maintained Valheim image](https://github.com/community-valheim-tools/valheim-server-docker).

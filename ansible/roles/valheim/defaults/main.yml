@@ -1,13 +1,12 @@
 ---
 valheim_enabled: false
-valheim_user: homelab-valheim
 valheim_home: /var/lib/homelab-valheim
 valheim_project_dir: "{{ valheim_home }}/stack"
 valheim_project_name: homelab-valheim
 # Maintained upstream image, pinned to the verified amd64 release manifest.
 valheim_server_image: ghcr.io/community-valheim-tools/valheim-server@sha256:f34d67ba8023e343b10ffda0144759a8c8d986f276510460315a01051bed8a6d
-valheim_runtime_dir: "/run/user/{{ valheim_account.uid }}"
-valheim_docker_socket: "{{ valheim_runtime_dir }}/docker.sock"
+valheim_uid: 1000
+valheim_gid: 1000
 
 valheim_config_dir: "{{ valheim_home }}/config"
 valheim_worlds_dir: "{{ valheim_home }}/saves"
