@@ -1,4 +1,4 @@
-# Valheim regression checks
+# Ansible regression checks
 
 Requires Ansible, the `community.docker` collection, PyYAML (included with
 Ansible), and Docker Compose v2. Run from the repository root:
@@ -31,3 +31,7 @@ It does not decrypt or assert the values in the real committed Vault files.
 A real host is still needed to verify first boot, gameplay, and idle shutdown
 with actual players. System timer configuration and project scoping are checked
 without starting services.
+
+`test_opencode.py` renders only temporary OpenCode fixtures and checks Compose
+validation, secret escaping, dedicated storage, privilege/resource limits, and
+preservation of user settings/data. It never builds images or starts containers.

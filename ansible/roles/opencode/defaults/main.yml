@@ -1,0 +1,13 @@
+---
+opencode_project_dir: /opt/homelab-opencode
+opencode_storage_dir: /var/lib/homelab-opencode
+# Pin the upstream multi-architecture image, not a floating latest tag.
+opencode_base_image: ghcr.io/anomalyco/opencode:2.1.4@sha256:6176a71bf7c1352d9aa9e7f112a4ef38443079a2f435789a33dd5ae809acea1a
+opencode_image: homelab-opencode:2.1.4
+opencode_port: 4096
+opencode_memory_limit: 4g
+# Equal memory + swap limits disable container swap, rather than reserving RAM.
+opencode_memory_swap_limit: 4g
+opencode_cpus: 2.0
+opencode_pids_limit: 512
+opencode_server_password: "{{ vault_opencode_server_password | default('') }}"
