@@ -1,0 +1,15 @@
+---
+- name: Prepare the isolated OpenCode stack
+  ansible.builtin.import_tasks: prepare.yml
+
+# Never contact Docker or start anything during a check-mode preview.
+- name: Build and start only the OpenCode stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ opencode_project_dir }}"
+    project_name: homelab-opencode
+    state: present
+    build: "{{ (opencode_dockerfile.changed or opencode_compose.changed) | ternary('always', 'policy') }}"
+    wait: true
+    wait_timeout: 180
+  when: not ansible_check_mode
+  no_log: true

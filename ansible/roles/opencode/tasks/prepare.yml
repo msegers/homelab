@@ -1,0 +1,100 @@
+---
+- name: Validate dedicated OpenCode storage and resource settings
+  ansible.builtin.assert:
+    that:
+      - opencode_project_dir is match('^/[A-Za-z0-9_/-]+$')
+      - opencode_storage_dir is match('^/[A-Za-z0-9_/-]+$')
+      - "'..' not in opencode_project_dir.split('/')"
+      - "'..' not in opencode_storage_dir.split('/')"
+      - opencode_project_dir.split('/') | reject('equalto', '') | list | length >= 2
+      - opencode_storage_dir.split('/') | reject('equalto', '') | list | length >= 2
+      - opencode_project_dir != opencode_storage_dir
+      - not opencode_project_dir.startswith(opencode_storage_dir.rstrip('/') + '/')
+      - not opencode_storage_dir.startswith(opencode_project_dir.rstrip('/') + '/')
+      - 1024 <= opencode_port | int <= 65535
+      - opencode_cpus | float > 0
+      - opencode_pids_limit | int > 0
+    fail_msg: Use separate dedicated absolute directories and positive resource limits.
+
+- name: Require a private server password from Ansible Vault
+  ansible.builtin.assert:
+    that:
+      - opencode_server_password is string
+      - opencode_server_password | length >= 24
+      - "'\n' not in opencode_server_password"
+      - "'\r' not in opencode_server_password"
+    fail_msg: Set vault_opencode_server_password to a unique password of at least 24 characters.
+  no_log: true
+
+- name: Check whether the configuration mount already exists
+  ansible.builtin.stat:
+    path: "{{ opencode_storage_dir }}/config"
+    follow: false
+  register: opencode_existing_config
+
+- name: Create the root-owned deployment and storage directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - "{{ opencode_project_dir }}"
+    - "{{ opencode_storage_dir }}"
+
+- name: Create only the designated persistent container directories
+  ansible.builtin.file:
+    path: "{{ opencode_storage_dir }}/{{ item }}"
+    state: directory
+    owner: "10001"
+    group: "10001"
+    mode: "0700"
+  loop: [workspace, config, data, state]
+
+# Never traverse agent-writable nested paths as root during later deployments.
+- name: Initialize OpenCode configuration only in a newly created config mount
+  ansible.builtin.file:
+    path: "{{ opencode_storage_dir }}/config/opencode"
+    state: directory
+    owner: "10001"
+    group: "10001"
+    mode: "0700"
+  when: not opencode_existing_config.stat.exists
+
+- name: Install the pinned development image definition
+  ansible.builtin.copy:
+    src: Dockerfile
+    dest: "{{ opencode_project_dir }}/Dockerfile"
+    owner: root
+    group: root
+    mode: "0644"
+  register: opencode_dockerfile
+
+- name: Exclude credentials and unrelated files from the build context
+  ansible.builtin.copy:
+    src: .dockerignore
+    dest: "{{ opencode_project_dir }}/.dockerignore"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Seed global configuration without overwriting user settings
+  ansible.builtin.copy:
+    src: opencode.json
+    dest: "{{ opencode_storage_dir }}/config/opencode/opencode.json"
+    force: false
+    owner: "10001"
+    group: "10001"
+    mode: "0600"
+  when: not opencode_existing_config.stat.exists
+
+- name: Render private OpenCode Compose configuration
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ opencode_project_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0600"
+  register: opencode_compose
+  no_log: true

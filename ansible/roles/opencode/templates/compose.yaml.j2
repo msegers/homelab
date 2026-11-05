@@ -1,0 +1,58 @@
+name: homelab-opencode
+
+services:
+  opencode:
+    image: {{ opencode_image | to_json | replace('$', '$$') }}
+    build:
+      context: .
+      args:
+        OPENCODE_IMAGE: {{ opencode_base_image | to_json | replace('$', '$$') }}
+    init: true
+    restart: unless-stopped
+    user: "10001:10001"
+    privileged: false
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    command: [serve, --hostname, 0.0.0.0, --port, "4096"]
+    working_dir: /workspace
+    ports:
+      - {{ ('127.0.0.1:' ~ opencode_port ~ ':4096') | to_json }}
+    environment:
+      OPENCODE_PASSWORD: {{ opencode_server_password | to_json | replace('$', '$$') }}
+    volumes:
+      - type: bind
+        source: {{ (opencode_storage_dir ~ '/workspace') | to_json | replace('$', '$$') }}
+        target: /workspace
+        bind:
+          create_host_path: false
+      - type: bind
+        source: {{ (opencode_storage_dir ~ '/config') | to_json | replace('$', '$$') }}
+        target: /home/opencode/.config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: {{ (opencode_storage_dir ~ '/data') | to_json | replace('$', '$$') }}
+        target: /home/opencode/.local/share
+        bind:
+          create_host_path: false
+      - type: bind
+        source: {{ (opencode_storage_dir ~ '/state') | to_json | replace('$', '$$') }}
+        target: /home/opencode/.local/state
+        bind:
+          create_host_path: false
+    mem_limit: {{ opencode_memory_limit | to_json }}
+    memswap_limit: {{ opencode_memory_swap_limit | to_json }}
+    cpus: {{ opencode_cpus | float }}
+    pids_limit: {{ opencode_pids_limit | int }}
+    healthcheck:
+      test: [CMD-SHELL, 'curl --fail --silent --user "opencode:$$OPENCODE_PASSWORD" http://127.0.0.1:4096/api/info >/dev/null']
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

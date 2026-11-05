@@ -6,6 +6,9 @@ mathijs.se, and Caddy to `/opt/homelab`.
 You need a Debian host with SSH access, a sudo-capable user, and a reserved LAN
 IP. Keep TCP 80/443 and TCP/UDP 53 available for the services.
 
+The [isolated OpenCode V2 workspace](../docs/opencode.md) has its own opt-in
+`opencode.yml` playbook; it is not deployed by `site.yml`.
+
 ## 1. Install Ansible locally
 
 From the repository root:

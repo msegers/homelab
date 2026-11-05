@@ -23,4 +23,6 @@ ansible-playbook site.yml --ask-vault-pass
 [Private Valheim dashboard](docs/valheim.md#private-dashboard) ·
 [Rust source and development](tools/valheim/README.md).
 
+[Optional isolated OpenCode V2 workspace](docs/opencode.md) (separate opt-in deployment).
+
 Originally inspired by [Saura Sahu's homelab](https://github.com/mrsauravsahu/kube-homelab).
