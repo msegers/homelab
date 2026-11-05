@@ -20,7 +20,8 @@ ROLE = ROOT / "ansible/roles/opencode"
 class OpenCodeProvisionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(
-            prefix="opencode-ansible-", dir="/tmp/opencode"
+            prefix="opencode-ansible-",
+            dir="/tmp/opencode" if Path("/tmp/opencode").is_dir() else None,
         )
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
