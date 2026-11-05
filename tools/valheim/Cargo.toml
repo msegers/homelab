@@ -19,6 +19,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4", features = ["derive"] }
 flate2 = "1"
 fs2 = "0.4"
+ipnet = "2"
 libc = "0.2"
 rand = "0.9"
 regex = "1"

@@ -1,4 +1,4 @@
-//! Loopback HTTP UI talks to a private Unix socket, never to Docker or sudo.
+//! Private LAN/loopback HTTP UI talks to a Unix socket, never to Docker or sudo.
 use crate::{
     controller::{Config, Controller},
     engine::DockerEngine,
@@ -6,15 +6,17 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Request, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use ipnet::Ipv4Net;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -95,6 +97,65 @@ impl Reply {
 pub struct WebState {
     pub socket: PathBuf,
     pub token: String,
+    pub access: Access,
+}
+
+#[derive(Clone)]
+pub struct Access {
+    pub bind: Ipv4Addr,
+    networks: Vec<Ipv4Net>,
+}
+
+impl Access {
+    pub fn new(bind: Ipv4Addr, networks: Vec<Ipv4Net>) -> Result<Self> {
+        ensure!(
+            bind.is_loopback() || bind.is_private(),
+            "Dashboard must bind to a loopback or RFC1918 LAN address, not a wildcard/public address"
+        );
+        ensure!(
+            !networks.is_empty(),
+            "At least one allowed private network is required"
+        );
+        for network in &networks {
+            ensure!(
+                (network.network().is_private() && network.broadcast().is_private())
+                    || (network.network().is_loopback() && network.broadcast().is_loopback()),
+                "Allowed networks must be entirely RFC1918 private or loopback ranges"
+            );
+        }
+        ensure!(
+            networks.iter().any(|network| network.contains(&bind)),
+            "Allowed networks must include the dashboard bind address"
+        );
+        Ok(Self { bind, networks })
+    }
+
+    pub fn allows_peer(&self, peer: IpAddr) -> bool {
+        match peer {
+            IpAddr::V4(ip) => {
+                ip.is_loopback() || self.networks.iter().any(|network| network.contains(&ip))
+            }
+            IpAddr::V6(_) => false,
+        }
+    }
+
+    pub fn allows_host(&self, host: &str) -> bool {
+        let (name, port) = host
+            .split_once(':')
+            .map_or((host, None), |(name, port)| (name, Some(port)));
+        (matches!(name, "localhost" | "127.0.0.1") || name == self.bind.to_string())
+            && port.is_none_or(|port| port.parse::<u16>().is_ok_and(|number| number > 0))
+    }
+}
+
+impl Default for Access {
+    fn default() -> Self {
+        Self::new(
+            Ipv4Addr::LOCALHOST,
+            vec!["127.0.0.0/8".parse().expect("constant network")],
+        )
+        .expect("constant access policy")
+    }
 }
 impl WebState {
     pub fn new(socket: PathBuf) -> Self {
@@ -102,7 +163,11 @@ impl WebState {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        Self { socket, token }
+        Self {
+            socket,
+            token,
+            access: Access::default(),
+        }
     }
 }
 
@@ -139,28 +204,39 @@ pub fn router(state: WebState) -> Router {
         .route("/api/status", get(status))
         .route("/api/action", post(action))
         .layer(DefaultBodyLimit::max(MAX_REQUEST as usize))
-        .layer(middleware::from_fn(private_headers))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            private_headers,
+        ))
         .with_state(state)
 }
 
 pub fn allowed_host(host: &str) -> bool {
-    let (name, port) = host
-        .split_once(':')
-        .map_or((host, None), |(name, port)| (name, Some(port)));
-    matches!(name, "localhost" | "127.0.0.1")
-        && port.is_none_or(|port| port.parse::<u16>().is_ok_and(|number| number > 0))
+    Access::default().allows_host(host)
 }
 
-async fn private_headers(request: Request, next: Next) -> Response {
+async fn private_headers(State(state): State<WebState>, request: Request, next: Next) -> Response {
+    // Trust the TCP peer, never spoofable Forwarded/X-Forwarded-For headers.
+    if !request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .is_some_and(|peer| state.access.allows_peer(peer.0.ip()))
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(Reply::failure("Client is outside the allowed LAN networks")),
+        )
+            .into_response();
+    }
     if !request
         .headers()
         .get("host")
         .and_then(|h| h.to_str().ok())
-        .is_some_and(allowed_host)
+        .is_some_and(|host| state.access.allows_host(host))
     {
         return (
             StatusCode::FORBIDDEN,
-            Json(Reply::failure("Loopback access only")),
+            Json(Reply::failure("Unexpected dashboard host")),
         )
             .into_response();
     }
@@ -348,9 +424,18 @@ pub async fn serve_broker(listener: UnixListener, config: PathBuf) -> Result<()>
     }
 }
 
-pub async fn web(port: u16, socket: PathBuf) -> Result<()> {
-    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?;
-    eprintln!("Valheim dashboard listening on http://127.0.0.1:{port} (SSH tunnel only)");
-    axum::serve(listener, router(WebState::new(socket))).await?;
+pub async fn web(port: u16, socket: PathBuf, access: Access) -> Result<()> {
+    let listener = tokio::net::TcpListener::bind((access.bind, port)).await?;
+    eprintln!(
+        "Valheim dashboard listening on http://{}:{port} (allowed private networks only)",
+        access.bind
+    );
+    let mut state = WebState::new(socket);
+    state.access = access;
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }

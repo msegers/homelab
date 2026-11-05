@@ -1,5 +1,5 @@
 [Unit]
-Description=Private Valheim dashboard (loopback only)
+Description=Private Valheim dashboard (allowed LAN networks only)
 Requires=valheim-dashboard-broker.service
 After=valheim-dashboard-broker.service
 
@@ -7,7 +7,8 @@ After=valheim-dashboard-broker.service
 Type=simple
 User=valheim-dashboard
 Group=valheim-dashboard
-ExecStart=/usr/local/libexec/homelab-valheim/valheim-dashboard web --port {{ valheim_dashboard_port | int }}
+ExecStart=/usr/local/libexec/homelab-valheim/valheim-dashboard web --port {{ valheim_dashboard_port | int }} --bind {{ valheim_dashboard_bind_ip }}{% for network in valheim_dashboard_allowed_networks %} --allow-network {{ network }}{% endfor %}
+
 Restart=on-failure
 RestartSec=3
 UMask=0077

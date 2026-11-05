@@ -1,5 +1,6 @@
 use axum::{
     body::{Body, to_bytes},
+    extract::ConnectInfo,
     http::{Request, StatusCode},
 };
 use homelab_valheim::dashboard::{
@@ -17,6 +18,7 @@ fn state() -> WebState {
     WebState {
         socket: PathBuf::from("/nonexistent/test.sock"),
         token: "test-token".into(),
+        access: Default::default(),
     }
 }
 fn request(method: &str, path: &str) -> axum::http::request::Builder {
@@ -24,6 +26,9 @@ fn request(method: &str, path: &str) -> axum::http::request::Builder {
         .method(method)
         .uri(path)
         .header("host", "localhost:8787")
+        .extension(ConnectInfo(
+            "127.0.0.1:12345".parse::<std::net::SocketAddr>().unwrap(),
+        ))
 }
 
 #[tokio::test]
@@ -78,6 +83,9 @@ async fn dns_rebinding_and_public_hosts_are_rejected() {
                 Request::builder()
                     .uri("/")
                     .header("host", host)
+                    .extension(ConnectInfo(
+                        "127.0.0.1:12345".parse::<std::net::SocketAddr>().unwrap(),
+                    ))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -93,7 +101,15 @@ async fn dns_rebinding_and_public_hosts_are_rejected() {
 #[tokio::test]
 async fn missing_host_is_rejected() {
     let response = router(state())
-        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/")
+                .extension(ConnectInfo(
+                    "127.0.0.1:12345".parse::<std::net::SocketAddr>().unwrap(),
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
@@ -248,7 +264,12 @@ async fn real_http_socket_serves_dashboard_on_loopback() {
     let address = listener.local_addr().unwrap();
     assert!(address.ip().is_loopback());
     let task = tokio::spawn(async move {
-        axum::serve(listener, router(state())).await.unwrap();
+        axum::serve(
+            listener,
+            router(state()).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     let mut client = TcpStream::connect(address).await.unwrap();
     client

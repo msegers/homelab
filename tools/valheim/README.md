@@ -43,7 +43,7 @@ bundler. UI testing uses Node's built-in runner with a small DOM/fetch stub.
 ## Privilege boundary
 
 ```text
-browser -> SSH tunnel -> 127.0.0.1:8787
+LAN browser -> private address:8787 (TCP client subnet allowlist)
                          dashboard (valheim-dashboard user)
                              -> /run/valheim-dashboard/control.sock
                                 broker (root, Unix socket only)
@@ -56,11 +56,16 @@ dashboard group) protects a 0660 broker socket. The broker accepts only typed
 `status`, `start`, `stop`, and `restart` requests, not arbitrary commands/arguments.
 CLI-only backup/update/world actions remain available through SSH.
 
-HTTP binds **only 127.0.0.1**, with no configurable public bind address. Host checks
+HTTP binds to one explicit **RFC1918 LAN or loopback IPv4 address**, never a
+wildcard/public address. The homelab uses `192.168.68.111:8787` and allows
+`192.168.68.0/24`; reusable defaults stay loopback-only. The real TCP peer must
+match the configured private CIDR allowlist (or loopback); forwarding headers
+are ignored. Missing connection metadata fails closed. Host checks
 reject DNS rebinding, mutations require a same-origin request plus a random token,
 and CSP denies framing/inline scripts. This is not a public, multi-user auth
-system: local users and anyone authorized to open the SSH tunnel can control the
-game. Do not forward the port, publish it in Caddy, or expose a tunnel publicly.
+system: **anyone on the allowed LAN can control the game**, over unencrypted HTTP.
+Use only a trusted LAN. Do not forward the port, publish it in Caddy, or use a
+public proxy that rewrites public client addresses to trusted LAN addresses.
 
 Operations share the existing filesystem lock; the broker reports busy rather
 than queuing simultaneous browser operations. CLI operations can also hold the

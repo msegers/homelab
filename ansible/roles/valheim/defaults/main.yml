@@ -39,3 +39,5 @@ valheim_rust_target: x86_64-unknown-linux-musl
 valheim_cargo_command: cargo
 valheim_dashboard_enabled: false
 valheim_dashboard_port: 8787
+valheim_dashboard_bind_ip: 127.0.0.1
+valheim_dashboard_allowed_networks: [127.0.0.0/8]
