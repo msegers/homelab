@@ -1,0 +1,24 @@
+---
+- name: Install system idle-check service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [valheim-idle.service, valheim-idle.timer]
+  register: valheim_idle_units
+
+- name: Apply idle timer configuration
+  ansible.builtin.systemd_service:
+    name: valheim-idle.timer
+    daemon_reload: true
+    enabled: "{{ valheim_idle_shutdown_enabled | bool }}"
+    state: "{{ 'restarted' if valheim_idle_shutdown_enabled | bool and valheim_idle_units.changed else ('started' if valheim_idle_shutdown_enabled | bool else 'stopped') }}"
+  when: not ansible_check_mode
+
+- name: Cancel an in-flight idle check when automatic shutdown is disabled
+  ansible.builtin.systemd_service:
+    name: valheim-idle.service
+    state: stopped
+  when: not valheim_idle_shutdown_enabled | bool

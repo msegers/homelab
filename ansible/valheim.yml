@@ -1,0 +1,11 @@
+---
+- name: Control the optional Valheim server
+  hosts: homelab
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run requested Valheim action
+      ansible.builtin.import_role:
+        name: valheim
+        tasks_from: operate
+      tags: [valheim]

@@ -1,0 +1,51 @@
+name: {{ valheim_project_name | to_json }}
+
+services:
+  valheim:
+    image: {{ valheim_server_image | to_json }}
+    container_name: valheim-server
+    profiles: [game]
+    restart: "no"
+    privileged: false
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - NET_RAW
+    stop_grace_period: {{ valheim_stop_timeout }}s
+    ports:
+      - {{ (valheim_game_bind_ip ~ ':' ~ valheim_server_port ~ '-' ~ ((valheim_server_port | int) + 2) ~ ':' ~ valheim_server_port ~ '-' ~ ((valheim_server_port | int) + 2) ~ '/udp') | to_json }}
+    volumes:
+      - {{ (valheim_config_dir ~ ':/config') | to_json }}
+      - {{ (valheim_worlds_dir ~ ':/config/worlds_local') | to_json }}
+      - {{ (valheim_backups_dir ~ ':/config/backups') | to_json }}
+      - {{ (valheim_data_dir ~ ':/opt/valheim') | to_json }}
+    environment:
+      SERVER_NAME: {{ valheim_server_name | to_json | replace('$', '$$') }}
+      WORLD_NAME: "${VALHEIM_WORLD:-{{ valheim_world_name }}}"
+      SERVER_PASS: {{ valheim_server_password | to_json | replace('$', '$$') }}
+      SERVER_PORT: {{ (valheim_server_port | string) | to_json }}
+      SERVER_PUBLIC: {{ ((valheim_server_public | bool) | ternary('true', 'false')) | to_json }}
+      CROSSPLAY: {{ ((valheim_crossplay | bool) | ternary('true', 'false')) | to_json }}
+      BEPINEX: "false"
+      TZ: {{ valheim_timezone | to_json }}
+      PUID: {{ (valheim_game_account.uid | string) | to_json }}
+      PGID: {{ (valheim_game_account.group | string) | to_json }}
+      PERMISSIONS_UMASK: "077"
+      CONFIG_DIRECTORY_PERMISSIONS: "700"
+      CONFIG_FILE_PERMISSIONS: "600"
+      WORLDS_DIRECTORY_PERMISSIONS: "700"
+      WORLDS_FILE_PERMISSIONS: "600"
+      BACKUPS_DIRECTORY_PERMISSIONS: "700"
+      BACKUPS_FILE_PERMISSIONS: "600"
+      BACKUPS: "true"
+      BACKUPS_CRON: "0 * * * *"
+      BACKUPS_MAX_AGE: "14"
+      BACKUPS_MAX_COUNT: "48"
+      BACKUPS_IF_IDLE: "false"
+      UPDATE_CRON: ""
+      RESTART_CRON: ""
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

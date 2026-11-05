@@ -1,0 +1,26 @@
+---
+- name: Validate requested operation
+  ansible.builtin.assert:
+    that:
+      - valheim_action | default('status') in ['start', 'stop', 'restart', 'status', 'backup', 'update', 'world', 'worlds', 'retire']
+      - valheim_action | default('status') != 'world' or (valheim_selected_world | default('')) is match('^[A-Za-z0-9_][A-Za-z0-9_-]*$')
+
+- name: Run the Valheim control command
+  ansible.builtin.command:
+    argv: "{{ ['/usr/local/sbin/valheimctl', valheim_action | default('status')] + ([valheim_selected_world] if valheim_action | default('status') == 'world' else []) }}"
+  register: valheim_operation
+  changed_when: valheim_action | default('status') not in ['status', 'worlds']
+  when:
+    - not ansible_check_mode
+    - valheim_action | default('status') != 'retire'
+
+- name: Show operation result
+  ansible.builtin.debug:
+    var: valheim_operation.stdout_lines
+  when:
+    - not ansible_check_mode
+    - valheim_action | default('status') != 'retire'
+
+- name: Retire Valheim without deleting saves
+  ansible.builtin.import_tasks: disable.yml
+  when: valheim_action | default('status') == 'retire'

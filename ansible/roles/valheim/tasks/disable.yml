@@ -1,0 +1,33 @@
+---
+- name: Find installed Valheim timer units
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ item }}"
+  loop: [valheim-idle.timer, valheim-idle.service]
+  register: valheim_retirement_units
+
+- name: Stop and disable only the Valheim idle timer
+  ansible.builtin.systemd_service:
+    name: valheim-idle.timer
+    state: stopped
+    enabled: false
+  when: valheim_retirement_units.results[0].stat.exists
+
+- name: Stop an in-flight Valheim idle check
+  ansible.builtin.systemd_service:
+    name: valheim-idle.service
+    state: stopped
+  when: valheim_retirement_units.results[1].stat.exists
+
+- name: Find an installed root-owned control command
+  ansible.builtin.stat:
+    path: /usr/local/sbin/valheimctl
+  register: valheim_retirement_helper
+
+- name: Gracefully stop Valheim while preserving all data
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/valheimctl, stop]
+  changed_when: false
+  when:
+    - valheim_retirement_helper.stat.isreg | default(false)
+    - valheim_retirement_helper.stat.uid | default(-1) == 0
+    - not ansible_check_mode

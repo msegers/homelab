@@ -1,0 +1,161 @@
+---
+- name: Validate Valheim settings
+  ansible.builtin.assert:
+    that:
+      - ansible_architecture == 'x86_64'
+      - valheim_project_dir is match('^/[A-Za-z0-9_/-]+$')
+      - valheim_project_dir not in ['/', '/opt', '/opt/homelab']
+      - valheim_game_bind_ip in ansible_all_ipv4_addresses
+      - 1024 <= valheim_server_port | int <= 65533
+      - valheim_game_account.uid | int > 0
+      - valheim_game_account.group | int > 0
+      - valheim_world_name is match('^[A-Za-z0-9_][A-Za-z0-9_-]*$')
+      - valheim_server_name is string
+      - valheim_server_name | length > 0
+      - valheim_idle_timeout_seconds | int >= 60
+      - 15 <= valheim_idle_poll_seconds | int <= 600
+    fail_msg: Use an amd64 host, assigned bind address, a valid world name/UDP port, and a 60+ second idle timeout.
+
+- name: Validate storage directories
+  ansible.builtin.assert:
+    that:
+      - item is match('^/[A-Za-z0-9_/-]+$')
+      - item not in ['/', '/opt', '/mnt', '/home', '/var', '/var/lib']
+    fail_msg: Choose dedicated absolute Valheim subdirectories, not storage roots.
+  loop:
+    - "{{ valheim_project_dir }}"
+    - "{{ valheim_config_dir }}"
+    - "{{ valheim_worlds_dir }}"
+    - "{{ valheim_backups_dir }}"
+    - "{{ valheim_data_dir }}"
+    - "{{ valheim_state_dir }}"
+
+- name: Keep saves and backups in separate directories
+  ansible.builtin.assert:
+    that:
+      - valheim_backups_dir != valheim_worlds_dir
+      - not valheim_backups_dir.startswith(valheim_worlds_dir.rstrip('/') ~ '/')
+      - not valheim_worlds_dir.startswith(valheim_backups_dir.rstrip('/') ~ '/')
+    fail_msg: Saves and backups must be separate, non-nested directories.
+
+- name: Keep administrative files and Docker sockets out of game mounts
+  ansible.builtin.assert:
+    that:
+      - protected | select('equalto', item) | list | length == 0
+      - protected | select('match', '^' ~ (item.rstrip('/') | regex_escape) ~ '/') | list | length == 0
+    fail_msg: Game storage must not expose administrative files or Docker sockets.
+  vars:
+    protected:
+      - "{{ valheim_state_dir }}"
+      - "{{ valheim_project_dir }}"
+      - /run/docker.sock
+      - /var/run/docker.sock
+      - /usr/local/libexec/homelab-valheim
+      - /usr/local/sbin/valheimctl
+  loop:
+    - "{{ valheim_config_dir }}"
+    - "{{ valheim_worlds_dir }}"
+    - "{{ valheim_backups_dir }}"
+    - "{{ valheim_data_dir }}"
+
+- name: Require configured storage mounts before creating directories
+  ansible.builtin.command:
+    argv: [mountpoint, -q, "{{ item }}"]
+  loop: "{{ valheim_required_mounts }}"
+  changed_when: false
+  check_mode: false
+
+- name: Validate game password
+  ansible.builtin.assert:
+    that:
+      - valheim_server_password is string
+      - valheim_server_password | length >= 5
+      - "'\n' not in valheim_server_password and '\r' not in valheim_server_password"
+    fail_msg: Set vault_valheim_server_password to a password of 5+ characters without newlines.
+  no_log: true
+
+- name: Inspect existing game storage before changing ownership
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ valheim_config_dir }}"
+    - "{{ valheim_worlds_dir }}"
+    - "{{ valheim_backups_dir }}"
+    - "{{ valheim_data_dir }}"
+  register: valheim_storage
+
+- name: Require real storage directories rather than symlinks
+  ansible.builtin.assert:
+    that:
+      - not item.stat.exists or (item.stat.isdir | default(false) and not item.stat.islnk | default(false))
+    fail_msg: Use the real directory path for Valheim storage; existing files and symlinks are not migrated automatically.
+  loop: "{{ valheim_storage.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Check non-empty storage directories
+  ansible.builtin.find:
+    paths: "{{ item.item }}"
+    hidden: true
+    file_type: any
+    recurse: false
+  loop: "{{ valheim_storage.results }}"
+  when: item.stat.isdir | default(false)
+  register: valheim_storage_contents
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Require explicit migration of existing non-empty data
+  ansible.builtin.assert:
+    that:
+      - item.item.stat.uid | int == valheim_game_account.uid | int
+      - item.item.stat.gid | int == valheim_game_account.group | int
+    fail_msg: "Stop Valheim and back up {{ item.item.item }} before migrating its ownership to {{ valheim_user }}:{{ valheim_group }}. See docs/valheim.md; existing files will not be recursively chowned by Ansible."
+  loop: "{{ valheim_storage_contents.results }}"
+  when: item.matched | default(0) | int > 0
+  loop_control:
+    label: "{{ item.item.item }}"
+
+- name: Create root-owned administrative directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - "{{ valheim_home }}"
+    - "{{ valheim_project_dir }}"
+    - "{{ valheim_state_dir }}"
+
+- name: Create persistent game storage directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ valheim_game_account.uid }}"
+    group: "{{ valheim_game_account.group }}"
+    mode: "0700"
+  loop:
+    - "{{ valheim_config_dir }}"
+    - "{{ valheim_worlds_dir }}"
+    - "{{ valheim_backups_dir }}"
+    - "{{ valheim_data_dir }}"
+
+# Rendering configuration deliberately does not run Compose. A stopped game
+# stays stopped, and running games change only on an explicit user command.
+- name: Render Valheim Compose configuration
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ valheim_project_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Render control settings
+  ansible.builtin.template:
+    src: control.json.j2
+    dest: "{{ valheim_state_dir }}/config.json"
+    owner: root
+    group: root
+    mode: "0600"
