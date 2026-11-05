@@ -1,7 +1,8 @@
 # Optional Valheim server
 
 Valheim uses the EliteDesk's existing Docker Engine, in its own Compose project.
-Scripts control it over SSH; a systemd timer stops it after an hour empty.
+Scripts control it over SSH. An opt-in systemd timer can stop it after an hour
+empty, once player detection has passed the [live acceptance test](valheim-acceptance.md).
 
 ## Enable and choose storage
 
@@ -17,13 +18,17 @@ valheim_server_port: 2456   # UDP 2456–2458
 valheim_worlds_dir: /srv/games/valheim/saves
 valheim_backups_dir: /srv/backups/valheim
 
-valheim_idle_shutdown_enabled: true
+# Enable only after the live acceptance test:
+valheim_idle_shutdown_enabled: false
 valheim_idle_timeout_seconds: 3600
 ```
 
-Use dedicated directories: Ansible assigns game storage to `valheim_uid` and
-`valheim_gid` (both default to 1000), with mode 0700. For NAS storage, mount it
-first and ensure it supports that UID's ownership/permissions.
+Ansible creates the locked, non-login system account/group `valheim-game` for
+game-data ownership, without Docker/sudo access. The OS allocates its IDs once;
+reruns preserve them. Optional `valheim_uid`/`valheim_gid` can pin **unused** IDs
+before creation; an existing account is never renumbered. Directories use mode
+0700. For NAS storage, mount it first and support these numeric IDs/permissions
+(including host-admin access for manual backups).
 Set `valheim_required_mounts: [/mnt/nas]` to fail safely if
 your required mount is missing. Existing NAS mount configuration stays as-is.
 
@@ -71,13 +76,26 @@ reruns. Configuration changes take effect on an explicit start/restart; Ansible
 does not start or restart the game during provisioning. The server stays stopped
 after host reboots too.
 
-For storage moves: stop the game, copy saves/backups preserving ownership, update
-the variables, rerun provisioning, then start it. Set `valheim_uid`/`valheim_gid`
-to match existing saves' ownership, or adjust ownership before starting.
+### Existing-data migration
+
+Stop the game and take a backup before changing ownership or storage paths.
+Ansible refuses non-empty folders owned by a different UID/GID. Initial
+provisioning creates the account, then reports any migration needed:
+
+```bash
+getent passwd valheim-game
+getent group valheim-game
+# On the server, substitute ONLY your dedicated Valheim data directories:
+sudo chown -hR -- valheim-game:valheim-game /path/to/config /path/to/saves /path/to/backups /path/to/server
+```
+
+Keep the game stopped, review the exact paths, and preserve an off-host backup.
+Never chown an entire shared NAS directory. For a storage move, copy data first,
+adjust ownership, update the variables, reprovision, then start and verify saves.
 
 ## Automatic shutdown
 
-The system-wide **`valheim-idle.timer`** checks every 60 seconds. After
+When enabled, the system-wide **`valheim-idle.timer`** checks every 60 seconds. After
 3600 seconds of confirmed zero-player readings, it gracefully stops the game
 container (120-second save/shutdown allowance).
 
@@ -86,6 +104,10 @@ container (120-second save/shutdown allowance).
 - Counts are queried inside the container using Steam A2S. This requires
   `valheim_server_public: true` and `valheim_crossplay: false` (defaults).
   Public listing does not configure router port forwarding.
+- A2S_PLAYER entries can have blank names and some modes/versions report false
+  zeros. Matching A2S_INFO/A2S_PLAYER zeros are not proof that a server is empty.
+  Shutdown defaults **off** until you validate occupied and empty readings using
+  the [live acceptance procedure](valheim-acceptance.md#player-count-and-shutdown-test).
 - Unqueryable/private-listing/crossplay modes stay running rather than risk
   disconnecting players. A final query is made immediately before stopping;
   a connection arriving at the exact stop instant can still race the check.
@@ -113,6 +135,12 @@ and world selection, stored in `valheim_backups_dir` with mode 0600. Manual
 archives are retained until you rotate them. Copy/encrypt them off-host: the
 included Compose configuration contains the game password.
 
+Archive failures remove only this operation's temporary output and preserve
+earlier backups, including on filename collisions. If saving succeeds but resume
+fails, the error includes the saved archive path. A failed restart/resume returns
+an error, never a success message. Check `status`/logs before assuming it is up;
+container startup is separate from game initialization/download readiness.
+
 The game image also keeps hourly world backups while recently active, capped at
 48 copies/14 days. Those backups run while the game container is running.
 
@@ -128,18 +156,32 @@ Compose configuration for the current paths/secrets.
 
 ## Permissions and lifecycle
 
-The image initializes permissions as container root, then runs the game using
-the configured non-root UID/GID. Privileged mode is disabled, no extra
-capabilities are added, and **no Docker socket is mounted**. Compose and control
-files stay root-owned; administration uses sudo on the host.
+The pinned image's bootstrap needs root for user mapping, ownership, cron and
+Supervisor setup; Supervisor then runs the game/updater/backup workers as the
+dedicated PUID/PGID. Keep this supported initialization path instead of forcing
+Compose `user:`. Privileged mode is disabled, NET_RAW is dropped, no extra
+capabilities are added, and **no Docker socket is mounted**. Data modes remain
+0700/0600; Compose/control files stay root-owned. See the
+[pinned-source audit and runtime checks](valheim-acceptance.md#image-and-account-checks).
 
 Valheim has its own project, persistent bind mounts, and `restart: "no"` policy.
 Commands explicitly target its service/container and verify Compose ownership.
 They leave Caddy, Pi-hole, and mathijs.se running. The idle timer runs a short
 check once per minute; there is no additional Docker daemon to keep idle.
 
-To retire Valheim, stop the game, set `valheim_enabled: false`, and run
-`sudo systemctl disable --now valheim-idle.timer`. Preserve the storage folders.
+To retire safely:
+
+```bash
+./scripts/valheim retire
+```
+
+This disables the timer, cancels an in-flight check, and gracefully stops only
+Valheim. Saves, backups, containers, and the game account remain for recovery.
+Set `valheim_enabled: false` in host variables and apply the playbook to keep it
+retired; this also performs the same safe stop on an installed instance. A fresh
+disabled installation leaves other services alone. Re-enable and provision when
+needed, then start manually. `valheim_idle_shutdown_enabled: false` disables
+only automatic shutdown, leaving the game running.
 
 If you deployed the earlier rootless preview, stop its game/timer before
 switching engines, back up the saves, and preserve/adjust their numeric ownership.

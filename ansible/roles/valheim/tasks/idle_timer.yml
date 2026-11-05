@@ -16,3 +16,9 @@
     enabled: "{{ valheim_idle_shutdown_enabled | bool }}"
     state: "{{ 'restarted' if valheim_idle_shutdown_enabled | bool and valheim_idle_units.changed else ('started' if valheim_idle_shutdown_enabled | bool else 'stopped') }}"
   when: not ansible_check_mode
+
+- name: Cancel an in-flight idle check when automatic shutdown is disabled
+  ansible.builtin.systemd_service:
+    name: valheim-idle.service
+    state: stopped
+  when: not valheim_idle_shutdown_enabled | bool

@@ -1,0 +1,83 @@
+---
+- name: Validate dedicated account names
+  ansible.builtin.assert:
+    that:
+      - valheim_user is match('^[a-z_][a-z0-9_-]*$')
+      - valheim_group is match('^[a-z_][a-z0-9_-]*$')
+      - valheim_user not in ['root', 'nobody', ansible_user | default('')]
+      - valheim_group not in ['root', 'docker', 'sudo', 'wheel', 'nogroup']
+      - valheim_uid is not defined or valheim_uid | int > 0
+      - valheim_gid is not defined or valheim_gid | int > 0
+
+- name: Look up the dedicated account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ valheim_user }}"
+    fail_key: false
+  register: valheim_existing_user
+
+- name: Look up the dedicated group
+  ansible.builtin.getent:
+    database: group
+    key: "{{ valheim_group }}"
+    fail_key: false
+  register: valheim_existing_group
+
+- name: Refuse account takeover or numeric ID changes
+  ansible.builtin.assert:
+    that:
+      - not account or account[1] | int > 0
+      - not group or group[1] | int > 0
+      - not account or account[5] in ['/usr/sbin/nologin', '/sbin/nologin', '/bin/false']
+      - not account or valheim_uid is not defined or account[1] | int == valheim_uid | int
+      - not group or valheim_gid is not defined or group[1] | int == valheim_gid | int
+      - not account or (group and account[2] | int == group[1] | int)
+      - not group or group[2] in ['', valheim_user]
+    fail_msg: Use a dedicated non-login account/group. Existing UID/GID changes and shared or interactive accounts require manual migration; nothing will be renumbered.
+  vars:
+    account: "{{ valheim_existing_user.ansible_facts.getent_passwd[valheim_user] }}"
+    group: "{{ valheim_existing_group.ansible_facts.getent_group[valheim_group] }}"
+
+- name: Check existing supplementary groups
+  ansible.builtin.command:
+    argv: [id, -G, "{{ valheim_user }}"]
+  register: valheim_existing_memberships
+  changed_when: false
+  check_mode: false
+  when: valheim_existing_user.ansible_facts.getent_passwd[valheim_user] is not none
+
+- name: Refuse a privileged or shared existing account
+  ansible.builtin.assert:
+    that:
+      - valheim_existing_memberships.stdout.split() | difference([valheim_existing_user.ansible_facts.getent_passwd[valheim_user][2]]) | length == 0
+    fail_msg: Remove supplementary groups from the dedicated game account before proceeding; it must not have Docker or sudo group access.
+  when: valheim_existing_user.ansible_facts.getent_passwd[valheim_user] is not none
+
+- name: Create the dedicated system group without changing existing IDs
+  ansible.builtin.group:
+    name: "{{ valheim_group }}"
+    gid: "{{ valheim_gid | default(omit) }}"
+    system: true
+    non_unique: false
+
+- name: Create a locked non-login system user for game files only
+  ansible.builtin.user:
+    name: "{{ valheim_user }}"
+    uid: "{{ valheim_uid | default(omit) }}"
+    group: "{{ valheim_group }}"
+    groups: ""
+    system: true
+    non_unique: false
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false
+    password_lock: true
+  register: valheim_game_account
+
+- name: Check that the account has no sudo authorization
+  ansible.builtin.command:
+    argv: [sudo, -n, -l, -U, "{{ valheim_user }}"]
+  register: valheim_sudo_check
+  changed_when: false
+  failed_when: valheim_sudo_check.rc != 1
+  when: not ansible_check_mode

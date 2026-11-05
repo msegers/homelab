@@ -1,6 +1,7 @@
 """Local checks: temporary provisioning, Compose validation, and fake game state."""
 
 import importlib.util
+import errno
 import json
 import os
 from pathlib import Path
@@ -40,31 +41,38 @@ class ProvisionTests(unittest.TestCase):
             "valheim_home": str(self.root / "home"),
             "valheim_project_dir": str(self.project),
             "valheim_game_bind_ip": "192.168.68.111",
-            "valheim_uid": os.getuid() or 1000,
-            "valheim_gid": os.getgid() or 1000,
+            "valheim_game_account": {"uid": os.getuid() or 1000, "group": os.getgid() or 1000},
             "vault_valheim_server_password": self.password,
         }
 
     def run_role(self, tasks_from="provision", expect_success=True):
         variables = self.variables
         tasks = [{"ansible.builtin.include_role": {"name": "valheim", "tasks_from": tasks_from}}]
-        if tasks_from == "provision":
+        if tasks_from in ["provision", "account_preflight"]:
             variables = yaml.safe_load((ROLE / "defaults/main.yml").read_text()) | self.variables
-            tasks = yaml.safe_load((ROLE / "tasks/provision.yml").read_text())
+            source = "account.yml" if tasks_from == "account_preflight" else "provision.yml"
+            tasks = yaml.safe_load((ROLE / "tasks" / source).read_text())
+            if tasks_from == "account_preflight":
+                tasks = [task for task in tasks if "ansible.builtin.assert" in task]
             # Exercise the production rendering without requiring root on the
             # test machine. Root ownership policy is asserted separately below.
             for task in tasks:
                 for module in ["ansible.builtin.file", "ansible.builtin.template"]:
                     if module in task:
-                        task[module]["owner"] = str(os.getuid())
-                        task[module]["group"] = str(os.getgid())
+                        if task[module].get("owner") == "root":
+                            task[module]["owner"] = str(os.getuid())
+                        if task[module].get("group") == "root":
+                            task[module]["group"] = str(os.getgid())
                 if "ansible.builtin.template" in task:
                     task["ansible.builtin.template"]["src"] = str(ROLE / "templates" / task["ansible.builtin.template"]["src"])
         play = [{"hosts": "localhost", "gather_facts": False, "vars": variables, "tasks": tasks}]
         path = self.root / "play.yml"
         path.write_text(yaml.safe_dump(play))
+        command = ["ansible-playbook", "-i", "localhost,", "-c", "local", str(path)]
+        if tasks_from == "main":
+            command.append("--check")  # Never stop a real test host's installed services.
         result = subprocess.run(
-            ["ansible-playbook", "-i", "localhost,", "-c", "local", str(path)],
+            command,
             cwd=self.root, text=True, capture_output=True,
             env=dict(os.environ, ANSIBLE_ROLES_PATH=str(ROOT / "ansible/roles"), ANSIBLE_NOCOLOR="1"),
         )
@@ -96,6 +104,7 @@ class ProvisionTests(unittest.TestCase):
         self.run_role()
         config = json.loads((self.root / "home/control/config.json").read_text())
         self.assertNotIn("socket", config)
+        self.assertFalse(config["idle_enabled"])
         controller = control.Controller(config)
         control.save_json(controller.world_file, {"world": "ChosenThroughScript"})
         control.save_json(controller.idle_file, {"example": "untouched"})
@@ -119,8 +128,10 @@ class ProvisionTests(unittest.TestCase):
         self.assertIn("privileged: false", (self.project / "docker-compose.yml").read_text())
         self.assertIn("no-new-privileges:true", game["security_opt"])
         self.assertEqual(game.get("cap_add", []), [])
-        self.assertEqual(game["environment"]["PUID"], str(self.variables["valheim_uid"]))
-        self.assertEqual(game["environment"]["PGID"], str(self.variables["valheim_gid"]))
+        self.assertIn("NET_RAW", game["cap_drop"])
+        self.assertEqual(game["environment"]["PUID"], str(self.variables["valheim_game_account"]["uid"]))
+        self.assertEqual(game["environment"]["PGID"], str(self.variables["valheim_game_account"]["group"]))
+        self.assertEqual(game["environment"]["WORLDS_DIRECTORY_PERMISSIONS"], "700")
         self.assertEqual({p["target"] for p in game["ports"]}, {30000, 30001, 30002})
         self.assertTrue(all(p["protocol"] == "udp" and p["host_ip"] == "192.168.68.111" for p in game["ports"]))
         self.assertEqual(game["environment"]["SERVER_PASS"].replace("$$", "$"), self.password)
@@ -144,6 +155,37 @@ class ProvisionTests(unittest.TestCase):
         self.run_role(expect_success=False)
         self.assertFalse(self.project.exists())
 
+    def test_existing_nonempty_storage_requires_explicit_owner_migration(self):
+        saves = self.root / "home/saves"
+        saves.mkdir(parents=True)
+        world = saves / "world.dat"
+        world.write_bytes(b"keep my world")
+        self.variables["valheim_game_account"]["uid"] = (os.getuid() or 1000) + 1
+        self.run_role(expect_success=False)
+        self.assertEqual(world.read_bytes(), b"keep my world")
+        self.assertEqual(saves.stat().st_uid, os.getuid())
+        self.assertFalse(self.project.exists())
+
+    def test_account_preflight_accepts_stable_ids_but_rejects_takeover_and_renumbering(self):
+        account = ["x", "995", "994", "", "/nonexistent", "/usr/sbin/nologin"]
+        group = ["x", "994", ""]
+        self.variables.update(
+            valheim_existing_user={"ansible_facts": {"getent_passwd": {"valheim-game": account}}},
+            valheim_existing_group={"ansible_facts": {"getent_group": {"valheim-game": group}}},
+            valheim_existing_memberships={"stdout": "994"},
+        )
+        self.run_role("account_preflight")
+        self.run_role("account_preflight")
+        for variable, value in [("valheim_uid", 996), ("valheim_gid", 997)]:
+            self.variables[variable] = value
+            self.run_role("account_preflight", expect_success=False)
+            self.variables.pop(variable)
+        account[5] = "/bin/bash"
+        self.run_role("account_preflight", expect_success=False)
+        account[5] = "/usr/sbin/nologin"
+        self.variables["valheim_existing_memberships"]["stdout"] = "994 966"
+        self.run_role("account_preflight", expect_success=False)
+
     def test_ansible_never_automatically_starts_game(self):
         for name in ["main.yml", "provision.yml", "install_control.yml", "idle_timer.yml"]:
             text = (ROLE / "tasks" / name).read_text()
@@ -154,7 +196,6 @@ class ProvisionTests(unittest.TestCase):
         self.assertFalse((ROLE / "tasks/rootless.yml").exists())
         for path in (ROLE / "tasks").glob("*.yml"):
             text = path.read_text()
-            self.assertNotIn("ansible.builtin.user:", text)
             self.assertNotIn("ansible.builtin.apt:", text)
             self.assertNotIn("scope: user", text)
         tasks = yaml.safe_load((ROLE / "tasks/idle_timer.yml").read_text())
@@ -166,6 +207,26 @@ class ProvisionTests(unittest.TestCase):
             if "ansible.builtin.template" in task:
                 self.assertEqual(task["ansible.builtin.template"]["owner"], "root")
                 self.assertEqual(task["ansible.builtin.template"]["mode"], "0600")
+        account = yaml.safe_load((ROLE / "tasks/account.yml").read_text())
+        user = next(task["ansible.builtin.user"] for task in account if "ansible.builtin.user" in task)
+        self.assertTrue(user["system"])
+        self.assertFalse(user["non_unique"])
+        self.assertEqual(user["groups"], "")
+        self.assertTrue(user["password_lock"])
+        self.assertFalse(user["create_home"])
+        self.assertEqual(user["shell"], "/usr/sbin/nologin")
+        defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+        self.assertNotIn("valheim_uid", defaults)
+        self.assertNotIn("valheim_gid", defaults)
+
+    def test_retirement_targets_only_valheim_and_preserves_files(self):
+        tasks = yaml.safe_load((ROLE / "tasks/disable.yml").read_text())
+        units = [task["ansible.builtin.systemd_service"]["name"] for task in tasks
+                 if "ansible.builtin.systemd_service" in task]
+        self.assertEqual(units, ["valheim-idle.timer", "valheim-idle.service"])
+        command = next(task["ansible.builtin.command"] for task in tasks if "ansible.builtin.command" in task)
+        self.assertEqual(command["argv"], ["/usr/local/sbin/valheimctl", "stop"])
+        self.assertNotIn("state: absent", (ROLE / "tasks/disable.yml").read_text())
 
 
 class FakeController(control.Controller):
@@ -191,6 +252,9 @@ class FakeController(control.Controller):
     def recent_activity(self, since):
         return self.activity
 
+    def game_state(self):
+        return "RUNNING"
+
     def stop(self):
         self.stops += 1
         self.info["State"]["Running"] = False
@@ -215,6 +279,7 @@ class ControllerTests(unittest.TestCase):
                        "project_dir": str(root / "stack"), "stop_timeout": 120}
         for name in ["worlds_dir", "config_dir", "backups_dir", "project_dir"]:
             Path(self.config[name]).mkdir()
+        (Path(self.config["project_dir"]) / "docker-compose.yml").write_text("services: {}\n")
         self.controller = FakeController(self.config)
 
     def tick(self, now):
@@ -327,6 +392,80 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.stops, 1)
         self.assertEqual(self.controller.starts, 1)
 
+    def test_archive_failure_preserves_existing_backups_and_resumes_game(self):
+        old = Path(self.controller.archive())
+        contents = old.read_bytes()
+        with patch.object(control.tarfile.TarFile, "add", side_effect=OSError(errno.ENOSPC, "full")):
+            with self.assertRaisesRegex(control.ControlError, "Backup failed.*No space left.*Valheim resumed"):
+                self.controller.backup()
+        self.assertEqual(old.read_bytes(), contents)
+        self.assertEqual(self.controller.starts, 1)
+        self.assertEqual(list(Path(self.config["backups_dir"]).glob("*.partial")), [])
+
+    def test_archive_and_resume_failures_are_both_reported(self):
+        with patch.object(self.controller, "archive", side_effect=OSError(errno.ENOSPC, "full")), \
+             patch.object(self.controller, "start", side_effect=control.ControlError("cannot start")):
+            with self.assertRaisesRegex(control.ControlError, "Backup failed.*resuming Valheim also failed") as failure:
+                self.controller.backup()
+        self.assertIsInstance(failure.exception.__cause__, OSError)
+
+    def test_successful_archive_is_kept_if_resume_fails(self):
+        with patch.object(self.controller, "start", side_effect=control.ControlError("cannot start")):
+            with self.assertRaisesRegex(control.ControlError, "Backup completed.*resuming Valheim also failed"):
+                self.controller.backup()
+        files = list(Path(self.config["backups_dir"]).glob("*.tar.gz"))
+        self.assertEqual(len(files), 1)
+        with tarfile.open(files[0]) as archive:
+            self.assertIn("world.json", archive.getnames())
+
+    def test_backup_filename_collision_never_replaces_existing_archive(self):
+        with patch.object(control.uuid, "uuid4", return_value=SimpleNamespace(hex="0" * 32)), \
+             patch.object(control, "datetime") as clock:
+            clock.now.return_value.strftime.return_value = "fixed-time-"
+            old = Path(self.controller.archive())
+            contents = old.read_bytes()
+            with self.assertRaises(FileExistsError):
+                self.controller.archive()
+        self.assertEqual(old.read_bytes(), contents)
+        self.assertEqual(list(Path(self.config["backups_dir"]).glob("*.partial")), [])
+
+    def test_failed_publication_preserves_existing_backups(self):
+        old = Path(self.controller.archive())
+        contents = old.read_bytes()
+        with patch.object(Path, "replace", side_effect=OSError(errno.ENOSPC, "full")):
+            with self.assertRaises(OSError):
+                self.controller.archive()
+        self.assertEqual(old.read_bytes(), contents)
+        self.assertEqual(list(Path(self.config["backups_dir"]).iterdir()), [old])
+
+    def test_failed_restart_is_reported_after_stop(self):
+        with patch.object(self.controller, "start", side_effect=control.ControlError("compose failed")):
+            with self.assertRaisesRegex(control.ControlError, "Restart failed after stopping"):
+                self.controller.run("restart")
+        self.assertEqual(self.controller.stops, 1)
+
+    def test_start_checks_container_and_supervisor_failures(self):
+        for state in ["exited", "fatal"]:
+            with self.subTest(state=state), patch.object(self.controller, "compose"), \
+                 patch.object(self.controller, "game_state", return_value="FATAL" if state == "fatal" else "RUNNING"):
+                self.controller.info["State"]["Running"] = state != "exited"
+                with self.assertRaises(control.ControlError):
+                    control.Controller.start(self.controller)
+
+    def test_failed_image_pull_leaves_running_game_untouched(self):
+        with patch.object(self.controller, "compose", side_effect=control.ControlError("pull failed")):
+            with self.assertRaisesRegex(control.ControlError, "existing game was left unchanged"):
+                self.controller.run("update")
+        self.assertEqual(self.controller.stops, 0)
+        self.assertEqual(self.controller.starts, 0)
+
+    def test_failed_world_backup_keeps_old_selection(self):
+        with patch.object(self.controller, "archive", side_effect=OSError(errno.ENOSPC, "full")):
+            with self.assertRaisesRegex(control.ControlError, "World switch failed"):
+                self.controller.select_world("OtherWorld")
+        self.assertEqual(self.controller.world(), "Home")
+        self.assertEqual(self.controller.starts, 1)
+
     def test_docker_uses_existing_engine_and_compose_targets_only_valheim(self):
         with patch.object(control.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
             control.Controller.docker(self.controller, "version")
@@ -387,6 +526,11 @@ class WrapperTests(unittest.TestCase):
         result = self.invoke("status", password_file=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("--ask-vault-pass", json.loads(result.stdout)["args"])
+
+    def test_retire_is_an_explicit_ansible_action(self):
+        result = self.invoke("retire")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("valheim_action=retire", json.loads(result.stdout)["args"])
 
     def test_rejects_invalid_actions_and_world_names(self):
         for args in [("delete",), ("world",), ("world", "--limit"), ("world", "name;whoami")]:

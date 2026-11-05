@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 {start|stop|restart|status|backup|update|world NAME|worlds} [Ansible options]" >&2
+  echo "Usage: $0 {start|stop|restart|status|backup|update|world NAME|worlds|retire} [Ansible options]" >&2
   exit 2
 }
 
@@ -10,7 +10,7 @@ usage() {
 action=$1
 shift
 case "$action" in
-  start|stop|restart|status|backup|update|worlds) extra="valheim_action=$action" ;;
+  start|stop|restart|status|backup|update|worlds|retire) extra="valheim_action=$action" ;;
   world)
     [[ $# -ge 1 && $1 =~ ^[A-Za-z0-9_][A-Za-z0-9_-]*$ ]] || usage
     extra="valheim_action=world valheim_selected_world=$1"

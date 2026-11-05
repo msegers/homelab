@@ -7,8 +7,8 @@
       - valheim_project_dir not in ['/', '/opt', '/opt/homelab']
       - valheim_game_bind_ip in ansible_all_ipv4_addresses
       - 1024 <= valheim_server_port | int <= 65533
-      - valheim_uid | int > 0
-      - valheim_gid | int > 0
+      - valheim_game_account.uid | int > 0
+      - valheim_game_account.group | int > 0
       - valheim_world_name is match('^[A-Za-z0-9_][A-Za-z0-9_-]*$')
       - valheim_server_name is string
       - valheim_server_name | length > 0
@@ -74,6 +74,48 @@
     fail_msg: Set vault_valheim_server_password to a password of 5+ characters without newlines.
   no_log: true
 
+- name: Inspect existing game storage before changing ownership
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ valheim_config_dir }}"
+    - "{{ valheim_worlds_dir }}"
+    - "{{ valheim_backups_dir }}"
+    - "{{ valheim_data_dir }}"
+  register: valheim_storage
+
+- name: Require real storage directories rather than symlinks
+  ansible.builtin.assert:
+    that:
+      - not item.stat.exists or (item.stat.isdir | default(false) and not item.stat.islnk | default(false))
+    fail_msg: Use the real directory path for Valheim storage; existing files and symlinks are not migrated automatically.
+  loop: "{{ valheim_storage.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Check non-empty storage directories
+  ansible.builtin.find:
+    paths: "{{ item.item }}"
+    hidden: true
+    file_type: any
+    recurse: false
+  loop: "{{ valheim_storage.results }}"
+  when: item.stat.isdir | default(false)
+  register: valheim_storage_contents
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Require explicit migration of existing non-empty data
+  ansible.builtin.assert:
+    that:
+      - item.item.stat.uid | int == valheim_game_account.uid | int
+      - item.item.stat.gid | int == valheim_game_account.group | int
+    fail_msg: "Stop Valheim and back up {{ item.item.item }} before migrating its ownership to {{ valheim_user }}:{{ valheim_group }}. See docs/valheim.md; existing files will not be recursively chowned by Ansible."
+  loop: "{{ valheim_storage_contents.results }}"
+  when: item.matched | default(0) | int > 0
+  loop_control:
+    label: "{{ item.item.item }}"
+
 - name: Create root-owned administrative directories
   ansible.builtin.file:
     path: "{{ item }}"
@@ -90,8 +132,8 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ valheim_uid }}"
-    group: "{{ valheim_gid }}"
+    owner: "{{ valheim_game_account.uid }}"
+    group: "{{ valheim_game_account.group }}"
     mode: "0700"
   loop:
     - "{{ valheim_config_dir }}"
