@@ -23,6 +23,11 @@ Those cover idle shutdown, game lifecycle, archives/recovery, native Steam query
 parsing, HTTP access restrictions, Unix-socket operations, and UI behavior.
 Tests use fake Docker engines and local ephemeral HTTP/UDP/Unix sockets, not the
 real Docker daemon. See the [project guide](../tools/valheim/README.md).
+
+`test_vault_migration.py` additionally checks the read-only migration verifier
+using temporary encrypted fixtures: moves preserve decryption, re-encryption/new
+keys are allowed, and missing/changed old values fail without logging secrets.
+It does not decrypt or assert the values in the real committed Vault files.
 A real host is still needed to verify first boot, gameplay, and idle shutdown
 with actual players. System timer configuration and project scoping are checked
 without starting services.

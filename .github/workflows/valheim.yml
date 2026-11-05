@@ -43,3 +43,4 @@ jobs:
           cd ansible
           ansible-playbook -i localhost, site.yml --syntax-check
           ansible-playbook -i localhost, valheim.yml --syntax-check
+          ansible-playbook -i localhost, verify-vault-migration.yml --syntax-check

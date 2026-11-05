@@ -6,6 +6,9 @@ and Caddy** with Docker Compose. Caddy handles website HTTPS.
 ## Run
 
 First time? Follow the [setup instructions](ansible/README.md).
+Upgrading an existing installation? Complete the
+[one-time inventory and Vault migration](ansible/README.md#existing-installations-one-time-inventory-and-vault-migration)
+before deployment; your gitignored inventory is not updated by pulling changes.
 Once configured, deploy or apply changes from the repository root:
 
 ```bash
