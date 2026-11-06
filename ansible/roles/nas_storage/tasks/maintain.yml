@@ -7,7 +7,7 @@
 
 - name: Examine both existing RAID members without modifying metadata
   ansible.builtin.command:
-    argv: [mdadm, --examine, --export, '{{ item.path }}']
+    argv: [/usr/sbin/mdadm, --examine, --export, '{{ item.path }}']
   loop: '{{ nas_storage_disks }}'
   register: nas_storage_member_metadata
   changed_when: false
@@ -28,7 +28,7 @@
 
 - name: Assemble only the recorded existing mirror if it is not active
   ansible.builtin.command:
-    argv: '{{ ["mdadm", "--assemble", "/dev/md/storage", "--uuid=" ~ nas_storage_identity.array_uuid] + (nas_storage_disks | map(attribute="path") | list) }}'
+    argv: '{{ ["/usr/sbin/mdadm", "--assemble", "/dev/md/storage", "--uuid=" ~ nas_storage_identity.array_uuid] + (nas_storage_disks | map(attribute="path") | list) }}'
   changed_when: true
   when: not nas_storage_array.stat.exists and not ansible_check_mode
 
@@ -39,7 +39,7 @@
 
 - name: Read the active array identity
   ansible.builtin.command:
-    argv: [mdadm, --detail, --export, /dev/md/storage]
+    argv: [/usr/sbin/mdadm, --detail, --export, /dev/md/storage]
   register: nas_storage_array_metadata
   changed_when: false
   check_mode: false
@@ -56,14 +56,14 @@
 
 - name: Resolve the active array's kernel device
   ansible.builtin.command:
-    argv: [readlink, --canonicalize-existing, /dev/md/storage]
+    argv: [/usr/bin/readlink, --canonicalize-existing, /dev/md/storage]
   register: nas_storage_array_resolved
   changed_when: false
   check_mode: false
 
 - name: Inspect active RAID members
   ansible.builtin.command:
-    argv: [ls, --almost-all, '/sys/class/block/{{ nas_storage_array_resolved.stdout | basename }}/slaves']
+    argv: [/usr/bin/ls, --almost-all, '/sys/class/block/{{ nas_storage_array_resolved.stdout | basename }}/slaves']
   register: nas_storage_active_members
   changed_when: false
   check_mode: false
@@ -77,14 +77,14 @@
 
 - name: Check RAID health without repairing it
   ansible.builtin.command:
-    argv: [mdadm, --detail, --test, /dev/md/storage]
+    argv: [/usr/sbin/mdadm, --detail, --test, /dev/md/storage]
   changed_when: false
   check_mode: false
 
 - name: Read degraded-member count and synchronization activity
   ansible.builtin.command:
     argv:
-      - cat
+      - /usr/bin/cat
       - '/sys/class/block/{{ nas_storage_array_resolved.stdout | basename }}/md/degraded'
       - '/sys/class/block/{{ nas_storage_array_resolved.stdout | basename }}/md/sync_action'
   register: nas_storage_raid_state
@@ -102,7 +102,7 @@
 
 - name: Probe the existing filesystem without formatting it
   ansible.builtin.command:
-    argv: [blkid, -p, -o, export, /dev/md/storage]
+    argv: [/usr/sbin/blkid, -p, -o, export, /dev/md/storage]
   register: nas_storage_filesystem
   changed_when: false
   check_mode: false
@@ -158,7 +158,7 @@
 
 - name: Verify filesystem availability at the exact mountpoint
   ansible.builtin.command:
-    argv: [findmnt, --json, --mountpoint, /srv/storage, --output, 'SOURCE,UUID,FSTYPE,TARGET,OPTIONS']
+    argv: [/usr/bin/findmnt, --json, --mountpoint, /srv/storage, --output, 'SOURCE,UUID,FSTYPE,TARGET,OPTIONS']
   register: nas_storage_verified_mount
   changed_when: false
   check_mode: false

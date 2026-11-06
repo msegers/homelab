@@ -52,6 +52,8 @@ available. It never contacts Docker or the homelab or starts a unit. See
 initialization opt-in and interrupted-run records, disk identities/OS protection,
 mounts/swap/holders, existing signatures and fstab ownership, RAID membership and
 degraded health, and filesystem/mount UUIDs. It also checks idempotent mdadm
-configuration in a temporary file. It never opens a disk, mounts a filesystem,
-or invokes mdadm/wipefs/mkfs. Real-disk initialization, completed resync, and
+configuration in a temporary file. A restricted-PATH check-mode test runs only
+`wipefs --no-act` on a disposable regular file and verifies it is unchanged.
+Tests never open real disks, mount a filesystem, or run destructive commands.
+Real-disk initialization, completed resync, and
 reboot acceptance remain owner-run steps in `docs/storage.md`.

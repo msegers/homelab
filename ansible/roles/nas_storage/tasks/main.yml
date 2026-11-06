@@ -2,3 +2,6 @@
 - name: Manage the explicitly selected NAS mirror
   ansible.builtin.import_tasks: manage.yml
   when: nas_storage_enabled | bool
+  # Non-login su may omit sbin. Also supply a known PATH to utility helpers.
+  environment:
+    PATH: /usr/sbin:/usr/bin:/sbin:/bin
