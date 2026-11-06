@@ -1,4 +1,4 @@
-"""Local Ansible safety regressions. Never open disks, mount, or run mdadm/mkfs."""
+"""Local Ansible safety regressions. Never open real disks or run destructive commands."""
 
 import base64
 import copy
@@ -32,9 +32,9 @@ def task(file, name):
 
 
 class StorageTests(unittest.TestCase):
-    def run_tasks(self, tasks, success=True, **variables):
+    def run_tasks(self, tasks, success=True, check_mode=False, **variables):
         settings = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
-        settings.update(ansible_distribution="Debian", nas_storage_disks=DISKS,
+        settings.update(ansible_facts={"distribution": "Debian"}, nas_storage_disks=DISKS,
                         nas_storage_protected_disk=HOST["nas_storage_protected_disk"])
         settings.update(variables)
         with tempfile.TemporaryDirectory(
@@ -43,14 +43,54 @@ class StorageTests(unittest.TestCase):
             path = Path(directory) / "play.yml"
             path.write_text(yaml.safe_dump([{"hosts": "localhost", "gather_facts": False,
                                             "vars": settings, "tasks": tasks}]))
-            result = subprocess.run(["ansible-playbook", "-i", "localhost,", "-c", "local", str(path)],
+            command = ["ansible-playbook", "-i", "localhost,", "-c", "local", str(path)]
+            if check_mode:
+                command.append("--check")
+            result = subprocess.run(command,
                                     cwd=directory, capture_output=True, text=True)
             self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
             return result
 
     def test_role_is_noop_by_default_even_with_initialization_flag(self):
         self.run_tasks([{"ansible.builtin.include_role": {"name": str(ROLE)}}],
-                       nas_storage_initialize=True)
+                        nas_storage_initialize=True)
+
+    def test_all_storage_executables_are_absolute_and_helpers_have_sbin_path(self):
+        def check_commands(tasks):
+            for entry in tasks:
+                if "block" in entry:
+                    check_commands(entry["block"])
+                argv = entry.get("ansible.builtin.command", {}).get("argv")
+                if isinstance(argv, list):
+                    self.assertTrue(Path(argv[0]).is_absolute(), entry["name"])
+                elif argv is not None:
+                    self.assertTrue(argv.startswith('{{ ["/usr/sbin/mdadm",'), entry["name"])
+
+        for file in (ROLE / "tasks").glob("*.yml"):
+            check_commands(yaml.safe_load(file.read_text()))
+        handlers = yaml.safe_load((ROLE / "handlers/main.yml").read_text())
+        check_commands(handlers)
+        main = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
+        self.assertEqual(main[0]["environment"]["PATH"], "/usr/sbin:/usr/bin:/sbin:/bin")
+        self.assertEqual(handlers[0]["environment"]["PATH"], main[0]["environment"]["PATH"])
+
+    def test_signature_preview_works_without_sbin_in_path(self):
+        probe = task("initialize", "Inspect all disk and partition signatures without erasing them")
+        self.assertEqual(probe["ansible.builtin.command"]["argv"],
+                         ["/usr/sbin/wipefs", "--no-act", "--json", "{{ item.name }}"])
+        if not Path("/usr/sbin/wipefs").is_file():
+            self.skipTest("Install util-linux for the read-only regular-file signature fixture")
+        probe["environment"] = {"PATH": "/usr/bin:/bin"}
+        with tempfile.TemporaryDirectory(
+            dir="/tmp/opencode" if Path("/tmp/opencode").is_dir() else None,
+        ) as directory:
+            fixture = Path(directory) / "empty-regular-file"
+            fixture.write_bytes(b"\0" * 4096)
+            result = self.run_tasks([probe, {"ansible.builtin.assert": {"that":
+                "(nas_storage_initial_signatures.results[0].stdout | from_json).signatures | length == 0",
+            }}], check_mode=True, nas_storage_initial_nodes=[{"name": str(fixture)}])
+            self.assertIn("changed=0", result.stdout)
+            self.assertEqual(fixture.read_bytes(), b"\0" * 4096)
 
     def test_first_run_requires_explicit_opt_in(self):
         guard = task("manage", "Require deliberate first initialization")
@@ -239,7 +279,7 @@ class StorageTests(unittest.TestCase):
             self.assertNotIn(forbidden, routine)
         for t in block["block"]:
             argv = t.get("ansible.builtin.command", {}).get("argv", [])
-            if isinstance(argv, list) and argv and argv[0] in ["wipefs", "mkfs.ext4"]:
+            if isinstance(argv, list) and argv and Path(argv[0]).name in ["wipefs", "mkfs.ext4"]:
                 self.assertNotIn("/dev/sd", str(argv))
                 self.assertNotIn("Samsung", str(argv))
 

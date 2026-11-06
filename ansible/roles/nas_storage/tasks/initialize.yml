@@ -36,7 +36,7 @@
 
 - name: Inspect kernel holders on every initial block device
   ansible.builtin.command:
-    argv: [ls, --almost-all, '/sys/class/block/{{ item.name | basename }}/holders']
+    argv: [/usr/bin/ls, --almost-all, '/sys/class/block/{{ item.name | basename }}/holders']
   loop: '{{ nas_storage_initial_nodes }}'
   register: nas_storage_holders
   changed_when: false
@@ -78,7 +78,7 @@
 
 - name: Inspect all disk and partition signatures without erasing them
   ansible.builtin.command:
-    argv: [wipefs, --no-act, --json, '{{ item.name }}']
+    argv: [/usr/sbin/wipefs, --no-act, --json, '{{ item.name }}']
   loop: '{{ nas_storage_initial_nodes }}'
   register: nas_storage_initial_signatures
   changed_when: false
@@ -96,7 +96,7 @@
 
 - name: Resolve stable old-partition paths before any destructive operation
   ansible.builtin.command:
-    argv: [readlink, --canonicalize-existing, '{{ item.item.path }}-part1']
+    argv: [/usr/bin/readlink, --canonicalize-existing, '{{ item.item.path }}-part1']
   loop: '{{ nas_storage_layouts.results }}'
   when: (item.stdout | from_json).blockdevices | length == 2
   register: nas_storage_old_partitions
@@ -151,7 +151,7 @@
 
     - name: Erase only the inspected old NTFS partition signatures
       ansible.builtin.command:
-        argv: [wipefs, --all, --, '{{ item.item.item.path }}-part1']
+        argv: [/usr/sbin/wipefs, --all, --, '{{ item.item.item.path }}-part1']
       loop: '{{ nas_storage_old_partitions.results }}'
       when: not item.skipped | default(false)
       changed_when: true
@@ -160,34 +160,34 @@
 
     - name: Erase partition-table signatures on only the two approved whole disks
       ansible.builtin.command:
-        argv: [wipefs, --all, --, '{{ item.path }}']
+        argv: [/usr/sbin/wipefs, --all, --, '{{ item.path }}']
       loop: '{{ nas_storage_disks }}'
       changed_when: true
 
     - name: Let udev finish removing the old partition links
       ansible.builtin.command:
-        argv: [udevadm, settle]
+        argv: [/usr/bin/udevadm, settle]
       changed_when: false
 
     - name: Create the new two-disk RAID 1 mirror without force or assume-clean
       ansible.builtin.command:
-        argv: '{{ ["mdadm", "--create", "/dev/md/storage", "--metadata=1.2", "--level=1", "--raid-devices=2", "--name=storage", "--bitmap=internal", "--run"] + (nas_storage_disks | map(attribute="path") | list) }}'
+        argv: '{{ ["/usr/sbin/mdadm", "--create", "/dev/md/storage", "--metadata=1.2", "--level=1", "--raid-devices=2", "--name=storage", "--bitmap=internal", "--run"] + (nas_storage_disks | map(attribute="path") | list) }}'
       changed_when: true
 
     - name: Create ext4 only on the array just created by this initialization
       ansible.builtin.command:
-        argv: [mkfs.ext4, -L, storage, -m, '0', /dev/md/storage]
+        argv: [/usr/sbin/mkfs.ext4, -L, storage, -m, '0', /dev/md/storage]
       changed_when: true
 
     - name: Read the new array identity
       ansible.builtin.command:
-        argv: [mdadm, --detail, --export, /dev/md/storage]
+        argv: [/usr/sbin/mdadm, --detail, --export, /dev/md/storage]
       register: nas_storage_created_array
       changed_when: false
 
     - name: Read the new ext4 filesystem UUID
       ansible.builtin.command:
-        argv: [blkid, -p, -s, UUID, -o, value, /dev/md/storage]
+        argv: [/usr/sbin/blkid, -p, -s, UUID, -o, value, /dev/md/storage]
       register: nas_storage_created_filesystem
       changed_when: false
 

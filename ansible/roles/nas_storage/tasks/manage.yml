@@ -2,7 +2,7 @@
 - name: Validate the deliberately limited storage configuration
   ansible.builtin.assert:
     that:
-      - ansible_distribution == 'Debian'
+      - ansible_facts['distribution'] == 'Debian'
       - nas_storage_initialize is boolean
       - nas_storage_disks | length == 2
       - nas_storage_disks | map(attribute='path') | unique | length == 2
@@ -92,7 +92,7 @@
 
 - name: Resolve the selected disks without changing them
   ansible.builtin.command:
-    argv: [readlink, --canonicalize-existing, '{{ item }}']
+    argv: [/usr/bin/readlink, --canonicalize-existing, '{{ item }}']
   loop: '{{ (nas_storage_disks | map(attribute="path") | list) + [nas_storage_protected_disk] }}'
   register: nas_storage_resolved
   changed_when: false
@@ -105,7 +105,7 @@
 
 - name: Inspect member hardware and all descendant block devices
   ansible.builtin.command:
-    argv: [lsblk, --json, --bytes, --paths, --list, --output, 'NAME,TYPE,SIZE,MODEL,SERIAL,FSTYPE,UUID,LABEL,MOUNTPOINTS,RO', '{{ item.path }}']
+    argv: [/usr/bin/lsblk, --json, --bytes, --paths, --list, --output, 'NAME,TYPE,SIZE,MODEL,SERIAL,FSTYPE,UUID,LABEL,MOUNTPOINTS,RO', '{{ item.path }}']
   loop: '{{ nas_storage_disks }}'
   register: nas_storage_layouts
   changed_when: false
@@ -134,7 +134,7 @@
 
 - name: Resolve the mount path without creating it
   ansible.builtin.command:
-    argv: [realpath, --canonicalize-missing, /srv/storage]
+    argv: [/usr/bin/realpath, --canonicalize-missing, /srv/storage]
   register: nas_storage_canonical_mount
   changed_when: false
   check_mode: false
@@ -148,7 +148,7 @@
 
 - name: Inspect the current mount exactly at /srv/storage
   ansible.builtin.command:
-    argv: [findmnt, --json, --mountpoint, /srv/storage, --output, 'SOURCE,UUID,FSTYPE,TARGET']
+    argv: [/usr/bin/findmnt, --json, --mountpoint, /srv/storage, --output, 'SOURCE,UUID,FSTYPE,TARGET']
   register: nas_storage_mount
   changed_when: false
   failed_when: nas_storage_mount.rc not in [0, 1]

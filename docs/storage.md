@@ -24,6 +24,11 @@ The `nas_storage` role is integrated into `ansible/site.yml`, tagged `storage`.
 Reusable defaults are disabled. The committed homelab inventory enables the
 role and pins both member paths, models, serials, capacities, and the protected
 SSD path. **Initialization defaults to false and is not enabled in inventory.**
+Storage commands use absolute Debian executable paths and a role-local system
+PATH (also for the initramfs handler), so a non-login `su` environment without
+`/usr/sbin` does not break previews or initialization. Check mode only predicts
+installing `mdadm`; it is normal for that executable still to be absent before
+the first real apply. The signature preview uses already-installed util-linux.
 Until initialized, an ordinary full deployment fails at the storage gate before
 other roles run. Use the targeted commands below; they do not run other roles or
 their restart handlers.
