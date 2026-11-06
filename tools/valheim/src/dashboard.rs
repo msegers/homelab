@@ -41,6 +41,7 @@ pub enum Action {
     Restart,
     Worlds,
     World,
+    Create,
     Delete,
 }
 impl Action {
@@ -52,6 +53,7 @@ impl Action {
             Self::Restart => "restart",
             Self::Worlds => "worlds",
             Self::World => "world",
+            Self::Create => "create-world",
             Self::Delete => "delete-world",
         }
     }
@@ -65,17 +67,29 @@ pub struct Command {
     pub world: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirmation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<String>,
 }
 
 impl Command {
     fn validate(&self) -> Result<()> {
-        let needs_world = matches!(self.action, Action::World | Action::Delete);
+        let needs_world = matches!(self.action, Action::World | Action::Delete | Action::Create);
         ensure!(
             needs_world == self.world.is_some(),
             "Unexpected or missing world name"
         );
         if let Some(world) = &self.world {
             ensure!(crate::controller::valid_world(world), "Invalid world name");
+        }
+        if let Some(seed) = &self.seed {
+            ensure!(
+                matches!(self.action, Action::Create),
+                "Seeds are only allowed for new worlds"
+            );
+            ensure!(
+                crate::world_seed::valid_seed(seed),
+                "Seeds use 1–10 letters or numbers (case-sensitive)"
+            );
         }
         if matches!(self.action, Action::Delete) {
             ensure!(
@@ -122,6 +136,40 @@ impl Reply {
             Json(self),
         )
             .into_response()
+    }
+}
+
+fn controller_failure(error: &anyhow::Error) -> Reply {
+    // Only typed, fixed user-facing reasons cross the privilege boundary.
+    // Underlying I/O and Docker errors may contain secrets and remain in logs.
+    if let Some(reason) = error.downcast_ref::<crate::world_seed::CreationError>() {
+        Reply::failure(&reason.to_string())
+    } else {
+        Reply::failure(
+            "Controller failed; check server logs and selected/running state before retrying. No success was confirmed.",
+        )
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+
+    #[test]
+    fn only_fixed_creation_reasons_are_exposed_not_error_context_or_secrets() {
+        let private = "token=private-value /private/config.json";
+        let conflict =
+            anyhow::Error::new(crate::world_seed::CreationError::NameInUse).context(private);
+        let reply = controller_failure(&conflict);
+        assert!(!reply.ok);
+        let message = reply.error.unwrap();
+        assert!(message.contains("still has world saves"));
+        assert!(!message.contains("private"));
+        let reply = controller_failure(&anyhow::anyhow!(private));
+        assert!(!reply.ok);
+        let message = reply.error.unwrap();
+        assert!(message.contains("No success was confirmed"));
+        assert!(!message.contains("private"));
     }
 }
 
@@ -423,6 +471,7 @@ pub async fn broker_request(path: &Path, action: Action) -> Reply {
             action,
             world: None,
             confirmation: None,
+            seed: None,
         },
     )
     .await
@@ -477,8 +526,11 @@ async fn handle_broker(
             tokio::task::spawn_blocking(move || {
                 let result = Config::load(&config).and_then(|config| {
                     let engine = DockerEngine(config.clone());
-                    Controller { config, engine }
-                        .run(command.action.name(), command.world.as_deref())
+                    Controller { config, engine }.run_with_seed(
+                        command.action.name(),
+                        command.world.as_deref(),
+                        command.seed.as_deref(),
+                    )
                 });
                 match result {
                     Ok(output) => {
@@ -517,9 +569,7 @@ async fn handle_broker(
                     }
                     Err(error) => {
                         eprintln!("Dashboard {} failed: {error:#}", command.action.name());
-                        Reply::failure(
-                            "Controller failed; check server logs and status before retrying.",
-                        )
+                        controller_failure(&error)
                     }
                 }
             })

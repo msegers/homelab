@@ -16,6 +16,9 @@ a { color: #e7cf9b; }
 label { display: block; margin: 20px 0 8px; }
 input, select { width: 100%; padding: 12px; margin-bottom: 16px; font: inherit; color: inherit; background: #141c19; border: 1px solid #627668; border-radius: 8px; }
 p { line-height: 1.5; }
+.field-hint { color: #adbbb2; font-size: .85rem; margin: -8px 0 16px; }
+.operation-message { margin-bottom: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.operation-message[data-error="true"] { color: #d99585; }
 .danger { border-color: #d99585; }
 .heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 h2 { font-size: 1.2rem; margin: 0; }

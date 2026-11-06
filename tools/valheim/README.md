@@ -87,6 +87,10 @@ Old Python runtime code is removed only after the Rust binaries are installed.
 The Home Tools shell redirects `/` to `/valheim`. It includes status/player count,
 start/stop/restart, saved-world discovery, world selection/creation, and confirmed
 deletion. There is no public authentication, backup UI, or extra reverse proxy.
+The new-world form accepts an optional case-sensitive seed (1–10 letters/numbers).
+Blank uses native random generation; existing worlds cannot be reseeded. See
+[seeded world creation](docs/world-seeds.md) for the metadata format, safeguards,
+and real-game acceptance steps. No mods or extra services are required.
 `--allow-host lab.mathijs.se` explicitly allows that DNS name without relaxing
 the real-peer network allowlist. `--trusted-proxy 172.18.0.2/32` separately trusts
 that exact private proxy peer and its HTTPS forwarding scheme; Ansible discovers

@@ -33,9 +33,7 @@
       </section>
       <section aria-label="World management">
         <h2>Worlds</h2>
-        <p>Switch to a saved world, or enter a new name. New worlds generate on start; switching does not rename or overwrite other worlds.</p>
-        <p id="backup-policy">Checking backup policy…</p>
-        <label for="saved-world">Saved worlds (including the current selection)</label>
+        <label for="saved-world">Saved worlds</label>
         <select id="saved-world" disabled></select>
         <div class="actions">
           <button id="select-world" disabled>Use selected world</button>
@@ -43,9 +41,11 @@
         </div>
         <label for="new-world">New world name</label>
         <input id="new-world" maxlength="128" pattern="[A-Za-z0-9_][A-Za-z0-9_-]*" placeholder="e.g. Meadows" autocomplete="off" disabled>
-        <p>Letters, numbers, underscores and hyphens; up to 128 characters. This is a save name, not a seed.</p>
+        <label for="new-seed">Seed (optional)</label>
+        <input id="new-seed" maxlength="10" pattern="[A-Za-z0-9]{1,10}" placeholder="Random if blank" autocomplete="off" aria-describedby="seed-help" disabled>
+        <p id="seed-help" class="field-hint">Seed: 1–10 letters/numbers, case-sensitive.</p>
         <button id="create-world" disabled>Use new world</button>
-        <p>Switching or deleting while running disconnects players and briefly stops the server. Delete is unavailable for the selected or running world. Existing backup files are preserved.</p>
+        <p id="world-message" class="operation-message" role="status" aria-live="polite" hidden></p>
       </section>
       <footer>
         Status refreshes every 15 seconds. First startup can take several minutes.

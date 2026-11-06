@@ -121,6 +121,233 @@ fn tick(controller: &Controller<Fake>, now: u64) -> String {
 }
 
 #[test]
+fn seeded_creation_publishes_private_metadata_then_resumes_only_a_running_server() {
+    use std::os::unix::fs::MetadataExt;
+    for running in [false, true] {
+        let (_tmp, controller) = fixture();
+        controller
+            .engine
+            .info
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .running = running;
+        fs::write(
+            controller.config.worlds_dir.join("Home.db"),
+            "previous world",
+        )
+        .unwrap();
+        let message = controller
+            .run_with_seed("create-world", Some("NewWorld"), Some("Potato"))
+            .unwrap();
+        assert!(message.contains("custom seed prepared"));
+        assert_eq!(controller.world().unwrap(), "NewWorld");
+        let path = controller.config.worlds_dir.join("NewWorld.fwl");
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(&bytes[4..8], &36_i32.to_le_bytes());
+        assert_eq!(&bytes[8..24], b"\x08NewWorld\x06Potato");
+        assert!(!controller.config.worlds_dir.join("NewWorld.db").exists());
+        let owner = fs::metadata(&controller.config.worlds_dir).unwrap();
+        let metadata = fs::metadata(&path).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!((metadata.uid(), metadata.gid()), (owner.uid(), owner.gid()));
+        assert_eq!(controller.engine.stops.get(), usize::from(running));
+        assert_eq!(controller.engine.starts.get(), usize::from(running));
+        assert_eq!(
+            controller.engine.info.borrow().as_ref().unwrap().running,
+            running
+        );
+        assert_eq!(
+            fs::read(controller.config.worlds_dir.join("Home.db")).unwrap(),
+            b"previous world"
+        );
+        assert_eq!(
+            fs::read_dir(&controller.config.backups_dir)
+                .unwrap()
+                .count(),
+            1
+        );
+        // Starts and later switches must not rewrite seed metadata or state shape.
+        controller.start(false).unwrap();
+        controller.select_world("Home").unwrap();
+        controller.select_world("NewWorld").unwrap();
+        assert_eq!(fs::read(path).unwrap(), bytes);
+        let state: serde_json::Value = serde_json::from_slice(
+            &fs::read(controller.config.state_dir.join("world.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(state, json!({"world":"NewWorld"}));
+    }
+}
+
+#[test]
+fn random_creation_keeps_native_generation_and_optional_backup_policy() {
+    let (_tmp, mut controller) = fixture();
+    controller.config.pre_change_backups = false;
+    controller
+        .engine
+        .info
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .running = false;
+    controller.run("create-world", Some("RandomWorld")).unwrap();
+    assert_eq!(controller.world().unwrap(), "RandomWorld");
+    assert_eq!(
+        fs::read_dir(&controller.config.worlds_dir).unwrap().count(),
+        0
+    );
+    assert_eq!(
+        fs::read_dir(&controller.config.backups_dir)
+            .unwrap()
+            .count(),
+        0
+    );
+    assert_eq!(controller.engine.starts.get(), 0);
+    assert!(
+        controller
+            .run_with_seed("create-world", Some("RandomWorld"), Some("Potato"))
+            .is_err()
+    );
+}
+
+#[test]
+fn creation_refuses_existing_saves_incomplete_metadata_and_symlinks_before_stop() {
+    for suffix in ["", ".db", ".fwl", ".fwl2", ".db.old", ".symlink"] {
+        for seed in [None, Some("Potato")] {
+            let (_tmp, controller) = fixture();
+            let path = controller
+                .config
+                .worlds_dir
+                .join(format!("NewWorld{suffix}"));
+            if suffix.is_empty() {
+                fs::create_dir(&path).unwrap();
+                fs::write(path.join("chunk.1"), "preserve").unwrap();
+            } else if suffix == ".symlink" {
+                std::os::unix::fs::symlink("missing", &path).unwrap();
+            } else {
+                fs::write(&path, "preserve").unwrap();
+            }
+            assert!(
+                controller
+                    .run_with_seed("create-world", Some("newworld"), seed)
+                    .is_err()
+            );
+            assert!(fs::symlink_metadata(path).is_ok());
+            assert_eq!(controller.world().unwrap(), "Home");
+            assert_eq!(controller.engine.stops.get(), 0);
+            assert_eq!(controller.engine.starts.get(), 0);
+            assert_eq!(
+                fs::read_dir(&controller.config.backups_dir)
+                    .unwrap()
+                    .count(),
+                0
+            );
+        }
+    }
+}
+
+#[test]
+fn deleted_world_name_can_be_reused_without_touching_separately_named_backups() {
+    for seed in [None, Some("DikkeTietn")] {
+        let (_tmp, controller) = fixture();
+        controller
+            .engine
+            .info
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .running = false;
+        let saves = &controller.config.worlds_dir;
+        let backup = saves.join("Skoltr_backup_auto-20261105-190438");
+        fs::create_dir(&backup).unwrap();
+        fs::write(backup.join("chunk.1"), "preserved native backup").unwrap();
+        let backup_file = saves.join("Skoltr_backup_20261105.fwl");
+        fs::write(&backup_file, "preserved backup metadata").unwrap();
+        controller
+            .run_with_seed("create-world", Some("Skoltr"), seed)
+            .unwrap();
+        assert_eq!(controller.world().unwrap(), "Skoltr");
+        assert_eq!(
+            fs::read(backup.join("chunk.1")).unwrap(),
+            b"preserved native backup"
+        );
+        assert_eq!(fs::read(backup_file).unwrap(), b"preserved backup metadata");
+        assert_eq!(saves.join("Skoltr.fwl").exists(), seed.is_some());
+        assert!(!saves.join("Skoltr").exists());
+        assert_eq!(controller.engine.starts.get(), 0);
+    }
+}
+
+#[test]
+fn invalid_creation_requests_never_stop_the_server_or_modify_saves() {
+    let (_tmp, controller) = fixture();
+    for seed in ["", "a-b", "$(id)", "12345678901", "a\n", "é"] {
+        assert!(
+            controller
+                .run_with_seed("create-world", Some("NewWorld"), Some(seed))
+                .is_err()
+        );
+    }
+    for world in ["../escape", "Bad Name", "Home", "home", "X_backup_20261105"] {
+        assert!(
+            controller
+                .run_with_seed("create-world", Some(world), Some("Potato"))
+                .is_err()
+        );
+    }
+    for action in ["world", "start", "delete-world", "status"] {
+        assert!(
+            controller
+                .run_with_seed(action, Some("NewWorld"), Some("Potato"))
+                .is_err()
+        );
+    }
+    assert_eq!(controller.world().unwrap(), "Home");
+    assert_eq!(controller.engine.stops.get(), 0);
+    assert_eq!(
+        fs::read_dir(&controller.config.worlds_dir).unwrap().count(),
+        0
+    );
+}
+
+#[test]
+fn failed_creation_backup_or_unclean_stop_preserves_selection_and_never_publishes_seed() {
+    for failure in ["backup", "stop"] {
+        let (_tmp, controller) = fixture();
+        if failure == "backup" {
+            fs::remove_dir(&controller.config.backups_dir).unwrap();
+            fs::write(&controller.config.backups_dir, "not a directory").unwrap();
+        } else {
+            controller.engine.stop_mode.set(2);
+        }
+        assert!(
+            controller
+                .run_with_seed("create-world", Some("NewWorld"), Some("Potato"))
+                .is_err()
+        );
+        assert_eq!(controller.world().unwrap(), "Home");
+        assert!(!controller.config.worlds_dir.join("NewWorld.fwl").exists());
+    }
+}
+
+#[test]
+fn failed_resume_preserves_completed_seeded_creation_for_retry() {
+    let (_tmp, controller) = fixture();
+    controller.engine.compose_fail.set(true);
+    let error = controller
+        .run_with_seed("create-world", Some("NewWorld"), Some("Potato"))
+        .unwrap_err();
+    assert!(error.to_string().contains("resuming Valheim also failed"));
+    assert_eq!(controller.world().unwrap(), "NewWorld");
+    let path = controller.config.worlds_dir.join("NewWorld.fwl");
+    let bytes = fs::read(&path).unwrap();
+    controller.engine.compose_fail.set(false);
+    controller.start(false).unwrap();
+    assert_eq!(fs::read(path).unwrap(), bytes);
+}
+
+#[test]
 fn world_switch_can_skip_backups_but_deletion_always_creates_a_recoverable_archive() {
     let (_tmp, mut controller) = fixture();
     controller.config.pre_change_backups = false;

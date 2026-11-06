@@ -3,3 +3,4 @@ pub mod archive;
 pub mod controller;
 pub mod dashboard;
 pub mod engine;
+pub mod world_seed;

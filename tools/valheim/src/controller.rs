@@ -1,5 +1,5 @@
 //! Lifecycle operations shared by the CLI and the private dashboard broker.
-use crate::{a2s::Observation, archive, engine::Engine};
+use crate::{a2s::Observation, archive, engine::Engine, world_seed};
 use anyhow::{Context, Result, bail, ensure};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -272,6 +272,57 @@ impl<E: Engine> Controller<E> {
         }
     }
 
+    /// The control lock covers validation, publication, selection, and resume.
+    pub fn create_world(&self, name: &str, seed: Option<&str>) -> Result<String> {
+        if let Some(seed) = seed {
+            ensure!(
+                world_seed::valid_seed(seed),
+                world_seed::CreationError::InvalidSeed
+            );
+        }
+        ensure!(
+            !name.eq_ignore_ascii_case(&self.world()?),
+            world_seed::CreationError::Selected
+        );
+        if let Some(info) = self
+            .engine
+            .inspect()?
+            .filter(|info| info.running || info.restarting)
+        {
+            ensure!(
+                !info
+                    .env
+                    .get("WORLD_NAME")
+                    .is_some_and(|world| world.eq_ignore_ascii_case(name)),
+                world_seed::CreationError::Running
+            );
+        }
+        world_seed::require_new(&self.config.worlds_dir, name)?;
+        self.while_stopped("World creation", || {
+            let backup = self.pre_change_backup()?;
+            world_seed::require_new(&self.config.worlds_dir, name)?;
+            if let Some(seed) = seed {
+                world_seed::create(&self.config.worlds_dir, name, seed)?;
+            }
+            // If selection fails, retain the newly created metadata for recovery,
+            // never remove or overwrite files on an uncertain failure path.
+            save_json(
+                &self.config.state_dir.join("world.json"),
+                &json!({"world": name}),
+            )?;
+            self.reset_idle()?;
+            Ok(format!(
+                "Selected new world {name}; {}; {backup}; {}",
+                if seed.is_some() {
+                    "custom seed prepared"
+                } else {
+                    "random seed on first start"
+                },
+                "terrain generates on start; a previously stopped server stays stopped"
+            ))
+        })
+    }
+
     /// The caller holds control.lock. Never remove the selected or live world.
     pub fn delete_world(&self, name: &str) -> Result<String> {
         ensure!(valid_world(name), "Invalid world name");
@@ -465,9 +516,22 @@ impl<E: Engine> Controller<E> {
     }
 
     pub fn run(&self, action: &str, world: Option<&str>) -> Result<String> {
+        self.run_with_seed(action, world, None)
+    }
+
+    pub fn run_with_seed(
+        &self,
+        action: &str,
+        world: Option<&str>,
+        seed: Option<&str>,
+    ) -> Result<String> {
         ensure!(
-            matches!(action, "world" | "delete-world") == world.is_some(),
-            "Supply a world name only with the world action"
+            seed.is_none() || action == "create-world",
+            "Seeds are only allowed when creating a new world"
+        );
+        ensure!(
+            matches!(action, "world" | "delete-world" | "create-world") == world.is_some(),
+            "Supply a world name only with world, create-world, or delete-world"
         );
         let lock = OpenOptions::new()
             .create(true)
@@ -499,6 +563,7 @@ impl<E: Engine> Controller<E> {
             "restart" => self.restart(),
             "backup" => self.backup(),
             "world" => self.select_world(world.context("Missing world")?),
+            "create-world" => self.create_world(world.context("Missing world")?, seed),
             "delete-world" => self.delete_world(world.context("Missing world")?),
             "worlds" => self.worlds(),
             "update" => {

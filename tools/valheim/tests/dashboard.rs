@@ -345,6 +345,21 @@ async fn broker_itself_rejects_unknown_actions_without_loading_config() {
         );
     }
     assert!(!broker_request(&path, Action::Status).await.ok); // missing config fails, never contacts Docker
+    // The broker independently validates seed requests, even without the HTTP layer.
+    for body in [
+        r#"{"action":"create","world":"NewWorld","seed":"$(id)"}"#,
+        r#"{"action":"world","world":"Other","seed":"Potato"}"#,
+        r#"{"action":"delete","world":"Other","confirmation":"Other","seed":"Potato"}"#,
+    ] {
+        let mut stream = tokio::net::UnixStream::connect(&path).await.unwrap();
+        stream.write_all(body.as_bytes()).await.unwrap();
+        stream.shutdown().await.unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        let reply: Value = serde_json::from_slice(&response).unwrap();
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"].as_str().unwrap().contains("Seeds"));
+    }
     helper.abort();
 }
 
@@ -403,6 +418,8 @@ async fn world_requests_preserve_only_typed_fields_across_the_socket() {
     let commands = vec![
         json!({"action":"worlds"}),
         json!({"action":"world","world":"NewWorld"}),
+        json!({"action":"create","world":"SeededWorld","seed":"Potato"}),
+        json!({"action":"create","world":"RandomWorld"}),
         json!({"action":"delete","world":"Other","confirmation":"Other"}),
     ];
     let expected = commands.clone();
@@ -450,6 +467,16 @@ async fn world_payloads_are_validated_before_contacting_the_broker() {
         json!({"action": "delete", "world": "Other"}),
         json!({"action": "delete", "world": "Other", "confirmation": "Wrong"}),
         json!({"action": "world", "world": "Other", "confirmation": "Other"}),
+        json!({"action": "world", "world": "Other", "seed": "Potato"}),
+        json!({"action": "start", "seed": "Potato"}),
+        json!({"action": "delete", "world": "Other", "confirmation": "Other", "seed": "Potato"}),
+        json!({"action": "create", "seed": "Potato"}),
+        json!({"action": "create", "world": "../escape", "seed": "Potato"}),
+        json!({"action": "create", "world": "New", "seed": ""}),
+        json!({"action": "create", "world": "New", "seed": "a-b"}),
+        json!({"action": "create", "world": "New", "seed": "12345678901"}),
+        json!({"action": "create", "world": "New", "seed": " a"}),
+        json!({"action": "create", "world": "New", "confirmation": "New"}),
     ] {
         let response = router(state())
             .oneshot(

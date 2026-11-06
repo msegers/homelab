@@ -16,6 +16,13 @@ function text(id, value) {
   document.getElementById(id).textContent = value;
 }
 
+function worldMessage(message, error = false) {
+  const target = element('world-message');
+  target.textContent = message;
+  target.hidden = !message;
+  target.dataset.error = String(error);
+}
+
 function updateControls() {
   for (const button of buttons) {
     button.disabled = busy || !known || !token ||
@@ -23,7 +30,7 @@ function updateControls() {
   }
   const unavailable = busy || !known || !token;
   const worldsUnavailable = unavailable || !worldsKnown;
-  for (const id of ['saved-world', 'new-world', 'create-world']) element(id).disabled = worldsUnavailable;
+  for (const id of ['saved-world', 'new-world', 'new-seed', 'create-world']) element(id).disabled = worldsUnavailable;
   const chosen = element('saved-world').value;
   element('select-world').disabled = worldsUnavailable || !chosen || chosen === selectedWorld;
   element('delete-world').disabled = worldsUnavailable || !chosen || chosen === selectedWorld || chosen === runningWorld;
@@ -58,7 +65,6 @@ async function refresh() {
     runningWorld = running ? status.running_world : '';
     backups = status.pre_change_backups !== false;
     text('running-world', runningWorld || '—');
-    text('backup-policy', `Backup before world switches: ${backups ? 'enabled' : 'OFF'}. Deletion always requires a successful archive.`);
     try {
       const names = await api('/api/worlds');
       if (!Array.isArray(names)) throw new Error('Invalid world list');
@@ -93,20 +99,33 @@ async function refresh() {
   }
 }
 
-async function worldAction(action, world, confirmation) {
+async function worldAction(action, world, confirmation, seed) {
   if (busy || !known || !worldsKnown || !token) return;
   if (!/^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$/.test(world)) {
-    text('message', 'Enter a world name using letters, numbers, underscores or hyphens (up to 128 characters).');
+    worldMessage('Enter a world name using letters, numbers, underscores or hyphens (up to 128 characters).', true);
     return;
   }
-  if (action === 'world' && !confirm(`Use world "${world}"? ${running ? 'Connected players will be disconnected; the server will stop and resume. ' : ''}${backups ? 'A backup will be taken.' : 'Automatic backups are disabled.'}`)) return;
+  if (seed !== undefined && !/^[A-Za-z0-9]{1,10}$/.test(seed)) {
+    worldMessage('Seeds use 1–10 letters or numbers and are case-sensitive. Leave blank for a random seed.', true);
+    return;
+  }
+  if (action === 'world' || action === 'create') {
+    const details = [`Use world "${world}"?`];
+    if (action === 'create') details.push(`Seed: ${seed === undefined ? 'random' : `"${seed}"`}.`);
+    details.push(running
+      ? 'Connected players will be disconnected; the server will stop and resume.'
+      : 'The server will stay stopped until you press Start.');
+    details.push(backups ? 'A backup will be taken.' : 'Automatic backups are disabled.');
+    if (!confirm(details.join(' '))) return;
+  }
   busy = true;
   updateControls();
-  text('message', 'World operation in progress… This may take several minutes.');
+  worldMessage('World operation in progress… This may take several minutes.');
   try {
-    text('message', await api('/api/action', action, { world, ...(confirmation === undefined ? {} : { confirmation }) }));
+    worldMessage(await api('/api/action', action, { world, ...(confirmation === undefined ? {} : { confirmation }), ...(seed === undefined ? {} : { seed }) }));
   } catch (error) {
-    text('message', error.message);
+    const label = action === 'create' ? 'World creation' : action === 'delete' ? 'World deletion' : 'World switch';
+    worldMessage(`${label} failed: ${error.message}`, true);
   } finally {
     await refresh();
     busy = false;
@@ -119,15 +138,16 @@ element('select-world').addEventListener('click', () => worldAction('world', ele
 element('create-world').addEventListener('click', () => {
   const name = element('new-world').value;
   if (worldNames.includes(name)) {
-    text('message', 'That world already exists. Choose it from the saved worlds list.');
+    worldMessage('That world already exists. Choose it from the saved worlds list.', true);
     return;
   }
-  return worldAction('world', name);
+  const seed = element('new-seed').value;
+  return worldAction('create', name, undefined, seed === '' ? undefined : seed);
 });
 element('delete-world').addEventListener('click', () => {
   const name = element('saved-world').value;
   if (!name || name === selectedWorld || name === runningWorld) return;
-  const confirmation = prompt(`Delete world "${name}"? A recoverable archive is required first; if it fails, deletion is canceled. ${running ? 'Connected players will be disconnected.' : ''} Type the exact world name to confirm.`);
+  const confirmation = prompt(`Delete world "${name}"? A recoverable archive is required first; if it fails, deletion is canceled. Existing backup files are preserved. ${running ? 'Connected players will be disconnected.' : ''} Type the exact world name to confirm.`);
   if (confirmation !== name) return;
   return worldAction('delete', name, confirmation);
 });

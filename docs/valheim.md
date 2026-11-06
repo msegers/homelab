@@ -219,7 +219,12 @@ and configured idle policy. Start, stop, and restart reuse the existing controll
 and lock. Stop/restart require confirmation; controls are disabled during work.
 Initial downloads can take minutes. A successful start is not a game-readiness
 guarantee. World listing, selection/creation and confirmed deletion are also
-available. Manual backups and updates remain CLI-only.
+available. The new-world form also accepts an optional **seed** (1–10 letters or
+numbers, case-sensitive); blank uses random generation. Seeds apply only to new
+worlds and never alter existing saves. A seeded world is prepared before its
+first start; terrain still generates in the game. Creating/selecting while stopped
+does not start the server. See [seed implementation and acceptance checks](../tools/valheim/docs/world-seeds.md).
+Manual backups and updates remain CLI-only.
 
 The web account cannot read game secrets, invoke sudo, or access Docker. Its
 Unix-socket broker allows only typed lifecycle/world operations. The allowed LAN is
