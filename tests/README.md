@@ -1,6 +1,6 @@
 # Ansible regression checks
 
-Requires Ansible, the `community.docker` collection, PyYAML (included with
+Requires Ansible, the collections in `ansible/requirements.yml`, PyYAML (included with
 Ansible), and Docker Compose v2. Run from the repository root:
 
 ```bash
@@ -47,3 +47,11 @@ fixtures. It also renders the exact-address start condition, exercises it with
 fake `ip` output, and parses synthetic units with `systemd-analyze verify` when
 available. It never contacts Docker or the homelab or starts a unit. See
 `ansible/README.md` for owner-run deployment/reboot acceptance.
+
+`test_storage.py` executes the role's Ansible safety assertions against fixtures:
+initialization opt-in and interrupted-run records, disk identities/OS protection,
+mounts/swap/holders, existing signatures and fstab ownership, RAID membership and
+degraded health, and filesystem/mount UUIDs. It also checks idempotent mdadm
+configuration in a temporary file. It never opens a disk, mounts a filesystem,
+or invokes mdadm/wipefs/mkfs. Real-disk initialization, completed resync, and
+reboot acceptance remain owner-run steps in `docs/storage.md`.

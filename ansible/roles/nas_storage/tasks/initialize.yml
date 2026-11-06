@@ -1,0 +1,209 @@
+---
+- name: Refuse to initialize over an existing array or mount
+  ansible.builtin.assert:
+    that:
+      - nas_storage_initialize
+      - not nas_storage_array.stat.exists
+      - nas_storage_mount.rc == 1
+    fail_msg: First initialization requires explicit opt-in, no named array, and no existing mount.
+
+- name: Restrict initial layout to empty disks or one old NTFS partition
+  ansible.builtin.assert:
+    that:
+      - nodes | length in [1, 2]
+      - nodes[0].fstype in [none, '']
+      - nodes | length == 1 or (nodes[1].type == 'part' and nodes[1].fstype == 'ntfs')
+    fail_msg: Unexpected existing storage found. Only an empty disk or the approved old NTFS layout may be initialized.
+  vars:
+    nodes: '{{ (item.stdout | from_json).blockdevices }}'
+  loop: '{{ nas_storage_layouts.results }}'
+  loop_control:
+    label: '{{ item.item.path }}'
+
+- name: Collect all initial block devices for read-only safety checks
+  ansible.builtin.set_fact:
+    nas_storage_initial_nodes: >-
+      {{ nas_storage_layouts.results | map(attribute='stdout') | map('from_json')
+         | map(attribute='blockdevices') | flatten }}
+
+- name: Refuse mounted filesystems or active swap on either disk
+  ansible.builtin.assert:
+    that: item.mountpoints | default([], true) | reject('equalto', none) | reject('equalto', '') | list | length == 0
+    fail_msg: '{{ item.name }} is mounted or used for swap; no signatures will be erased.'
+  loop: '{{ nas_storage_initial_nodes }}'
+  loop_control:
+    label: '{{ item.name }}'
+
+- name: Inspect kernel holders on every initial block device
+  ansible.builtin.command:
+    argv: [ls, --almost-all, '/sys/class/block/{{ item.name | basename }}/holders']
+  loop: '{{ nas_storage_initial_nodes }}'
+  register: nas_storage_holders
+  changed_when: false
+  check_mode: false
+
+- name: Refuse disks or partitions in use by another block device
+  ansible.builtin.assert:
+    that: item.stdout | trim | length == 0
+    fail_msg: '{{ item.item.name }} has kernel holders; no signatures will be erased.'
+  loop: '{{ nas_storage_holders.results }}'
+  loop_control:
+    label: '{{ item.item.name }}'
+
+- name: Refuse initial devices still referenced by fstab
+  ansible.builtin.assert:
+    that:
+      - item.name not in sources
+      - ('UUID=' ~ item.uuid) not in sources if item.uuid else true
+      - ('LABEL=' ~ item.label) not in sources if item.label else true
+    fail_msg: '{{ item.name }} is still referenced by fstab. Resolve that reference manually before initialization.'
+  vars:
+    sources: >-
+      {{ (nas_storage_fstab.content | b64decode).splitlines()
+         | reject('match', '^\s*(#|$)') | map('split') | map('first') | list }}
+  loop: '{{ nas_storage_initial_nodes }}'
+  loop_control:
+    label: '{{ item.name }}'
+
+- name: Refuse initial by-id paths still referenced by fstab
+  ansible.builtin.assert:
+    that:
+      - item.path not in sources
+      - (item.path ~ '-part1') not in sources
+  vars:
+    sources: >-
+      {{ (nas_storage_fstab.content | b64decode).splitlines()
+         | reject('match', '^\s*(#|$)') | map('split') | map('first') | list }}
+  loop: '{{ nas_storage_disks }}'
+
+- name: Inspect all disk and partition signatures without erasing them
+  ansible.builtin.command:
+    argv: [wipefs, --no-act, --json, '{{ item.name }}']
+  loop: '{{ nas_storage_initial_nodes }}'
+  register: nas_storage_initial_signatures
+  changed_when: false
+  check_mode: false
+
+- name: Refuse RAID, ext4, LVM, encryption, or any unapproved signature
+  ansible.builtin.assert:
+    that: >-
+      (item.stdout | from_json).signatures | map(attribute='type')
+      | difference(['ntfs', 'dos', 'gpt', 'PMBR']) | length == 0
+    fail_msg: Unexpected signatures found. Existing RAID or filesystems are never recreated, even with initialization enabled.
+  loop: '{{ nas_storage_initial_signatures.results }}'
+  loop_control:
+    label: '{{ item.item.name }}'
+
+- name: Resolve stable old-partition paths before any destructive operation
+  ansible.builtin.command:
+    argv: [readlink, --canonicalize-existing, '{{ item.item.path }}-part1']
+  loop: '{{ nas_storage_layouts.results }}'
+  when: (item.stdout | from_json).blockdevices | length == 2
+  register: nas_storage_old_partitions
+  changed_when: false
+  check_mode: false
+
+- name: Require each old-partition by-id link to refer to the inspected partition
+  ansible.builtin.assert:
+    that: item.stdout == (item.item.stdout | from_json).blockdevices[1].name
+  loop: '{{ nas_storage_old_partitions.results }}'
+  when: not item.skipped | default(false)
+  loop_control:
+    label: '{{ item.item.item.path }}-part1'
+
+- name: Show the exact destructive initialization plan (not executed in check mode)
+  ansible.builtin.debug:
+    msg:
+      - 'ERASE old NTFS signatures, if present: wipefs --all -- {{ nas_storage_disks[0].path }}-part1'
+      - 'ERASE old NTFS signatures, if present: wipefs --all -- {{ nas_storage_disks[1].path }}-part1'
+      - 'ERASE partition-table signatures: wipefs --all -- {{ nas_storage_disks[0].path }}'
+      - 'ERASE partition-table signatures: wipefs --all -- {{ nas_storage_disks[1].path }}'
+      - 'CREATE: mdadm --create /dev/md/storage --metadata=1.2 --level=1 --raid-devices=2 --name=storage --bitmap=internal --run {{ nas_storage_disks[0].path }} {{ nas_storage_disks[1].path }}'
+      - 'FORMAT only the newly created array: mkfs.ext4 -L storage -m 0 /dev/md/storage'
+      - 'PROTECTED, never erased or formatted: {{ nas_storage_protected_disk }}'
+
+- name: Initialize only after all preflight checks have passed
+  when: not ansible_check_mode
+  block:
+    - name: Create the private storage identity directory
+      ansible.builtin.file:
+        path: /var/lib/homelab-storage
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    # Write BEFORE erasure. An interrupted run must never silently initialize again.
+    - name: Record initialization in progress before the first destructive operation
+      ansible.builtin.copy:
+        dest: /var/lib/homelab-storage/identity.json
+        owner: root
+        group: root
+        mode: '0600'
+        force: false
+        content: '{{ {"phase": "initializing", "disks": nas_storage_disks, "protected_disk": nas_storage_protected_disk} | to_nice_json }}'
+      register: nas_storage_claim
+
+    - name: Require this run to have created the initialization record
+      ansible.builtin.assert:
+        that: nas_storage_claim.changed
+        fail_msg: An initialization record appeared after preflight; stop for manual investigation.
+
+    - name: Erase only the inspected old NTFS partition signatures
+      ansible.builtin.command:
+        argv: [wipefs, --all, --, '{{ item.item.item.path }}-part1']
+      loop: '{{ nas_storage_old_partitions.results }}'
+      when: not item.skipped | default(false)
+      changed_when: true
+      loop_control:
+        label: '{{ item.item.item.path }}-part1'
+
+    - name: Erase partition-table signatures on only the two approved whole disks
+      ansible.builtin.command:
+        argv: [wipefs, --all, --, '{{ item.path }}']
+      loop: '{{ nas_storage_disks }}'
+      changed_when: true
+
+    - name: Let udev finish removing the old partition links
+      ansible.builtin.command:
+        argv: [udevadm, settle]
+      changed_when: false
+
+    - name: Create the new two-disk RAID 1 mirror without force or assume-clean
+      ansible.builtin.command:
+        argv: '{{ ["mdadm", "--create", "/dev/md/storage", "--metadata=1.2", "--level=1", "--raid-devices=2", "--name=storage", "--bitmap=internal", "--run"] + (nas_storage_disks | map(attribute="path") | list) }}'
+      changed_when: true
+
+    - name: Create ext4 only on the array just created by this initialization
+      ansible.builtin.command:
+        argv: [mkfs.ext4, -L, storage, -m, '0', /dev/md/storage]
+      changed_when: true
+
+    - name: Read the new array identity
+      ansible.builtin.command:
+        argv: [mdadm, --detail, --export, /dev/md/storage]
+      register: nas_storage_created_array
+      changed_when: false
+
+    - name: Read the new ext4 filesystem UUID
+      ansible.builtin.command:
+        argv: [blkid, -p, -s, UUID, -o, value, /dev/md/storage]
+      register: nas_storage_created_filesystem
+      changed_when: false
+
+    - name: Remember the initialized array and filesystem identities
+      ansible.builtin.set_fact:
+        nas_storage_identity:
+          phase: ready
+          disks: '{{ nas_storage_disks }}'
+          protected_disk: '{{ nas_storage_protected_disk }}'
+          array_uuid: '{{ dict(nas_storage_created_array.stdout_lines | map("split", "=", 1)).MD_UUID }}'
+          filesystem_uuid: '{{ nas_storage_created_filesystem.stdout | trim }}'
+
+    - name: Persist the completed identity without enabling future initialization
+      ansible.builtin.copy:
+        dest: /var/lib/homelab-storage/identity.json
+        owner: root
+        group: root
+        mode: '0600'
+        content: '{{ nas_storage_identity | to_nice_json }}'

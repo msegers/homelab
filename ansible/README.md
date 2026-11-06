@@ -172,6 +172,12 @@ manager. For later edits, use `ansible-vault edit host_vars/homelab/vault.yml`.
 
 ## 4. Deploy
 
+The homelab now opts into a separately gated RAID 1 role. On an uninitialized
+host, the full playbook stops before other roles until storage is deliberately
+initialized. Review the exact HDD identifiers and destructive operations in
+[NAS storage setup](../docs/storage.md) first. Use `--tags storage` for that work;
+do not run a full deployment just to initialize the disks.
+
 The host also enables trusted HTTPS for `lab.mathijs.se` and `pihole.mathijs.se`.
 Before deployment, add the scoped Cloudflare token to the existing Vault using
 the [private HTTPS setup](../docs/home-tools.md#cloudflare-certificate-setup-before-deployment).
