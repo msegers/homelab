@@ -1,0 +1,188 @@
+---
+- name: Refresh array presence after possible first initialization
+  ansible.builtin.stat:
+    path: /dev/md/storage
+    follow: true
+  register: nas_storage_array
+
+- name: Examine both existing RAID members without modifying metadata
+  ansible.builtin.command:
+    argv: [mdadm, --examine, --export, '{{ item.path }}']
+  loop: '{{ nas_storage_disks }}'
+  register: nas_storage_member_metadata
+  changed_when: false
+  check_mode: false
+
+- name: Require both disks to belong to the recorded two-disk RAID 1
+  ansible.builtin.assert:
+    that:
+      - metadata.MD_UUID == nas_storage_identity.array_uuid
+      - metadata.MD_LEVEL == 'raid1'
+      - metadata.MD_DEVICES | int == 2
+    fail_msg: RAID member metadata differs from the recorded mirror; no repair or initialization will be attempted.
+  vars:
+    metadata: '{{ dict(item.stdout_lines | select("search", "=") | map("split", "=", 1)) }}'
+  loop: '{{ nas_storage_member_metadata.results }}'
+  loop_control:
+    label: '{{ item.item.path }}'
+
+- name: Assemble only the recorded existing mirror if it is not active
+  ansible.builtin.command:
+    argv: '{{ ["mdadm", "--assemble", "/dev/md/storage", "--uuid=" ~ nas_storage_identity.array_uuid] + (nas_storage_disks | map(attribute="path") | list) }}'
+  changed_when: true
+  when: not nas_storage_array.stat.exists and not ansible_check_mode
+
+- name: Explain inactive-array check-mode limitation
+  ansible.builtin.assert:
+    that: nas_storage_array.stat.exists or not ansible_check_mode
+    fail_msg: The existing mirror is inactive. Check mode will not assemble it; apply without initialization to assemble by its recorded UUID.
+
+- name: Read the active array identity
+  ansible.builtin.command:
+    argv: [mdadm, --detail, --export, /dev/md/storage]
+  register: nas_storage_array_metadata
+  changed_when: false
+  check_mode: false
+
+- name: Require the active array to match the recorded mirror
+  ansible.builtin.assert:
+    that:
+      - metadata.MD_UUID == nas_storage_identity.array_uuid
+      - metadata.MD_LEVEL == 'raid1'
+      - metadata.MD_DEVICES | int == 2
+    fail_msg: /dev/md/storage is not the recorded RAID 1. It will not be modified or mounted.
+  vars:
+    metadata: '{{ dict(nas_storage_array_metadata.stdout_lines | select("search", "=") | map("split", "=", 1)) }}'
+
+- name: Resolve the active array's kernel device
+  ansible.builtin.command:
+    argv: [readlink, --canonicalize-existing, /dev/md/storage]
+  register: nas_storage_array_resolved
+  changed_when: false
+  check_mode: false
+
+- name: Inspect active RAID members
+  ansible.builtin.command:
+    argv: [ls, --almost-all, '/sys/class/block/{{ nas_storage_array_resolved.stdout | basename }}/slaves']
+  register: nas_storage_active_members
+  changed_when: false
+  check_mode: false
+
+- name: Require exactly the two approved whole-disk members
+  ansible.builtin.assert:
+    that: >-
+      nas_storage_active_members.stdout_lines | sort ==
+      (nas_storage_resolved.results[:2] | map(attribute='stdout') | map('basename') | sort)
+    fail_msg: RAID membership differs from the approved disks. No add, replace, remove, or recreation will be attempted.
+
+- name: Check RAID health without repairing it
+  ansible.builtin.command:
+    argv: [mdadm, --detail, --test, /dev/md/storage]
+  changed_when: false
+  check_mode: false
+
+- name: Read degraded-member count and synchronization activity
+  ansible.builtin.command:
+    argv:
+      - cat
+      - '/sys/class/block/{{ nas_storage_array_resolved.stdout | basename }}/md/degraded'
+      - '/sys/class/block/{{ nas_storage_array_resolved.stdout | basename }}/md/sync_action'
+  register: nas_storage_raid_state
+  changed_when: false
+  check_mode: false
+
+- name: Report a degraded array as a failure, never as a reason to initialize
+  ansible.builtin.assert:
+    that: nas_storage_raid_state.stdout_lines[0] | int == 0
+    fail_msg: The mirror is degraded. Stop for manual diagnosis; no automatic disk replacement or initialization is configured.
+
+- name: Report current RAID synchronization activity
+  ansible.builtin.debug:
+    msg: 'RAID 1 has both members; sync_action={{ nas_storage_raid_state.stdout_lines[1] }}. Initial resync need not be complete yet.'
+
+- name: Probe the existing filesystem without formatting it
+  ansible.builtin.command:
+    argv: [blkid, -p, -o, export, /dev/md/storage]
+  register: nas_storage_filesystem
+  changed_when: false
+  check_mode: false
+
+- name: Require the recorded ext4 filesystem
+  ansible.builtin.assert:
+    that:
+      - filesystem.TYPE == 'ext4'
+      - filesystem.UUID == nas_storage_identity.filesystem_uuid
+    fail_msg: The filesystem is missing or differs from the record. Routine runs never run mkfs, fsck repair, or UUID changes.
+  vars:
+    filesystem: '{{ dict(nas_storage_filesystem.stdout_lines | select("search", "=") | map("split", "=", 1)) }}'
+
+- name: Inspect persistent mdadm configuration
+  ansible.builtin.slurp:
+    src: /etc/mdadm/mdadm.conf
+  register: nas_storage_mdadm_config
+
+- name: Refuse a conflicting named-array configuration
+  ansible.builtin.assert:
+    that: ('UUID=' ~ nas_storage_identity.array_uuid) in item.split()
+    fail_msg: An unrelated ARRAY entry already owns /dev/md/storage. It will not be overwritten.
+  vars:
+    nas_storage_array_entry_pattern: '^\s*ARRAY\s+/dev/md/storage\s+'
+  loop: '{{ (nas_storage_mdadm_config.content | b64decode).splitlines() | select("match", nas_storage_array_entry_pattern) | list }}'
+
+- name: Persist assembly of only this array by its recorded UUID
+  ansible.builtin.lineinfile:
+    path: /etc/mdadm/mdadm.conf
+    regexp: '^\s*ARRAY\s+/dev/md/storage\s+'
+    line: 'ARRAY /dev/md/storage UUID={{ nas_storage_identity.array_uuid }}'
+  notify: Refresh initramfs for NAS assembly
+
+- name: Create an empty mount directory only when needed
+  ansible.builtin.file:
+    path: /srv/storage
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: not nas_storage_directory.stat.exists
+
+- name: Persist and mount only the verified filesystem by UUID
+  ansible.posix.mount:
+    path: /srv/storage
+    src: 'UUID={{ nas_storage_identity.filesystem_uuid }}'
+    fstype: ext4
+    opts: defaults,nofail,x-systemd.device-timeout=30s
+    dump: '0'
+    passno: '2'
+    state: mounted
+  notify: Reload NAS mount units
+
+- name: Verify filesystem availability at the exact mountpoint
+  ansible.builtin.command:
+    argv: [findmnt, --json, --mountpoint, /srv/storage, --output, 'SOURCE,UUID,FSTYPE,TARGET,OPTIONS']
+  register: nas_storage_verified_mount
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode or nas_storage_mount.rc == 0
+
+- name: Require the expected mounted filesystem rather than an OS-disk fallback
+  ansible.builtin.assert:
+    that:
+      - mounted.uuid == nas_storage_identity.filesystem_uuid
+      - mounted.fstype == 'ext4'
+      - mounted.target == '/srv/storage'
+      - "'rw' in mounted.options.split(',')"
+    fail_msg: /srv/storage is not backed by the expected writable ext4 volume.
+  vars:
+    mounted: '{{ (nas_storage_verified_mount.stdout | from_json).filesystems[0] }}'
+  when: not ansible_check_mode or nas_storage_mount.rc == 0
+
+- name: Verify the mounted filesystem can be accessed
+  ansible.builtin.stat:
+    path: /srv/storage/.
+  register: nas_storage_available
+  when: not ansible_check_mode or nas_storage_mount.rc == 0
+
+- name: Require an accessible mounted storage directory
+  ansible.builtin.assert:
+    that: nas_storage_available.stat.isdir | default(false)
+  when: not ansible_check_mode or nas_storage_mount.rc == 0

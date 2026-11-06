@@ -33,3 +33,16 @@ valheim_dashboard_proxy_container: homelab-proxy-1
 # Docker binds published ports to the Wi-Fi LAN address. This host uses ifupdown.
 docker_ifupdown_wait_online_interface: wlp0s20f3
 docker_ifupdown_wait_online_address: '{{ compose_bind_ip }}'
+
+# Whole-disk RAID 1. Initialization is never enabled in committed inventory.
+nas_storage_enabled: true
+nas_storage_protected_disk: /dev/disk/by-id/ata-Samsung_SSD_850_EVO_500GB_S21JNXAG412018R
+nas_storage_disks:
+  - path: /dev/disk/by-id/ata-WDC_WD10EZEX-08WN4A0_WD-WCC6Y0UNLFLH
+    model: WDC WD10EZEX-08WN4A0
+    serial: WD-WCC6Y0UNLFLH
+    size: 1000204886016
+  - path: /dev/disk/by-id/ata-ST1000NM0011_Z1N245KW
+    model: ST1000NM0011
+    serial: Z1N245KW
+    size: 1000204886016

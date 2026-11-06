@@ -1,0 +1,235 @@
+---
+- name: Validate the deliberately limited storage configuration
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == 'Debian'
+      - nas_storage_initialize is boolean
+      - nas_storage_disks | length == 2
+      - nas_storage_disks | map(attribute='path') | unique | length == 2
+      - nas_storage_disks | map(attribute='serial') | unique | length == 2
+      - nas_storage_protected_disk is match('^/dev/disk/by-id/(ata|wwn)-[A-Za-z0-9_.:-]+$')
+      - nas_storage_protected_disk not in (nas_storage_disks | map(attribute='path') | list)
+
+- name: Require stable whole-disk identities and expected hardware
+  ansible.builtin.assert:
+    that:
+      - item.path is match('^/dev/disk/by-id/(ata|wwn)-[A-Za-z0-9_.:-]+$')
+      - item.path is not search('-part[0-9]+$')
+      - item.model | length > 0
+      - item.serial | length > 0
+      - item.size | int > 0
+  loop: '{{ nas_storage_disks }}'
+
+- name: Inspect the durable initialization record
+  ansible.builtin.stat:
+    path: /var/lib/homelab-storage/identity.json
+    follow: false
+  register: nas_storage_record
+
+- name: Inspect the initialization record directory
+  ansible.builtin.stat:
+    path: /var/lib/homelab-storage
+    follow: false
+  register: nas_storage_record_directory
+
+- name: Refuse a symlink or non-directory identity location
+  ansible.builtin.assert:
+    that: >-
+      not nas_storage_record_directory.stat.exists or
+      (nas_storage_record_directory.stat.isdir and not nas_storage_record_directory.stat.islnk)
+
+- name: Require deliberate first initialization
+  ansible.builtin.assert:
+    that:
+      - nas_storage_record.stat.exists or nas_storage_initialize
+      - not nas_storage_record.stat.exists or nas_storage_record.stat.isreg
+    fail_msg: >-
+      No storage identity record exists. Routine deployment cannot initialize disks.
+      Review docs/storage.md and the exact disk IDs before the one-time opt-in.
+
+- name: Load the existing storage identity
+  ansible.builtin.slurp:
+    src: /var/lib/homelab-storage/identity.json
+  register: nas_storage_record_content
+  when: nas_storage_record.stat.exists
+
+- name: Validate the existing storage identity before any disk operations
+  ansible.builtin.assert:
+    that:
+      - identity.phase == 'ready'
+      - identity.disks == nas_storage_disks
+      - identity.protected_disk == nas_storage_protected_disk
+      - identity.array_uuid is match('^[0-9a-f]{8}(:[0-9a-f]{8}){3}$')
+      - identity.filesystem_uuid is match('^[0-9a-f-]{36}$')
+    fail_msg: >-
+      Storage identity is incomplete or differs from inventory. Stop for manual
+      investigation; neither initialization nor formatting will be retried.
+  vars:
+    identity: '{{ nas_storage_record_content.content | b64decode | from_json }}'
+  when: nas_storage_record.stat.exists
+
+- name: Remember the validated identity
+  ansible.builtin.set_fact:
+    nas_storage_identity: '{{ nas_storage_record_content.content | b64decode | from_json }}'
+  when: nas_storage_record.stat.exists
+
+- name: Require all selected disks and the protected OS disk to exist
+  ansible.builtin.stat:
+    path: '{{ item }}'
+    follow: true
+  loop: '{{ (nas_storage_disks | map(attribute="path") | list) + [nas_storage_protected_disk] }}'
+  register: nas_storage_disk_stats
+
+- name: Refuse missing disks rather than rebuilding or initializing
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isblk | default(false)
+    fail_msg: 'Missing/non-block disk {{ item.item }}. No creation, replacement, or repair will be attempted.'
+  loop: '{{ nas_storage_disk_stats.results }}'
+  loop_control:
+    label: '{{ item.item }}'
+
+- name: Resolve the selected disks without changing them
+  ansible.builtin.command:
+    argv: [readlink, --canonicalize-existing, '{{ item }}']
+  loop: '{{ (nas_storage_disks | map(attribute="path") | list) + [nas_storage_protected_disk] }}'
+  register: nas_storage_resolved
+  changed_when: false
+  check_mode: false
+
+- name: Reject aliases to the same disk or to the OS disk
+  ansible.builtin.assert:
+    that: nas_storage_resolved.results | map(attribute='stdout') | unique | length == 3
+    fail_msg: The two members and protected OS disk must resolve to three different devices.
+
+- name: Inspect member hardware and all descendant block devices
+  ansible.builtin.command:
+    argv: [lsblk, --json, --bytes, --paths, --list, --output, 'NAME,TYPE,SIZE,MODEL,SERIAL,FSTYPE,UUID,LABEL,MOUNTPOINTS,RO', '{{ item.path }}']
+  loop: '{{ nas_storage_disks }}'
+  register: nas_storage_layouts
+  changed_when: false
+  check_mode: false
+
+- name: Require the exact approved hardware
+  ansible.builtin.assert:
+    that:
+      - disk.type == 'disk'
+      - disk.model | trim == item.item.model
+      - disk.serial | trim == item.item.serial
+      - disk.size | int == item.item.size | int
+      - not disk.ro | bool
+    fail_msg: 'Hardware identity changed for {{ item.item.path }}. Refusing to continue.'
+  vars:
+    disk: '{{ (item.stdout | from_json).blockdevices | first }}'
+  loop: '{{ nas_storage_layouts.results }}'
+  loop_control:
+    label: '{{ item.item.path }}'
+
+- name: Inspect the intended mount without following symlinks
+  ansible.builtin.stat:
+    path: /srv/storage
+    follow: false
+  register: nas_storage_directory
+
+- name: Resolve the mount path without creating it
+  ansible.builtin.command:
+    argv: [realpath, --canonicalize-missing, /srv/storage]
+  register: nas_storage_canonical_mount
+  changed_when: false
+  check_mode: false
+
+- name: Refuse a symlink or non-directory mount path
+  ansible.builtin.assert:
+    that: >-
+      nas_storage_canonical_mount.stdout == '/srv/storage' and
+      (not nas_storage_directory.stat.exists or
+       (nas_storage_directory.stat.isdir and not nas_storage_directory.stat.islnk))
+
+- name: Inspect the current mount exactly at /srv/storage
+  ansible.builtin.command:
+    argv: [findmnt, --json, --mountpoint, /srv/storage, --output, 'SOURCE,UUID,FSTYPE,TARGET']
+  register: nas_storage_mount
+  changed_when: false
+  failed_when: nas_storage_mount.rc not in [0, 1]
+  check_mode: false
+
+- name: Refuse to replace an existing storage mount
+  ansible.builtin.assert:
+    that:
+      - nas_storage_record.stat.exists
+      - (nas_storage_mount.stdout | from_json).filesystems[0].uuid == nas_storage_identity.filesystem_uuid
+      - (nas_storage_mount.stdout | from_json).filesystems[0].fstype == 'ext4'
+    fail_msg: /srv/storage is already mounted from an unexpected filesystem; it will not be replaced.
+  when: nas_storage_mount.rc == 0
+
+- name: Inspect an unmounted storage directory including hidden files
+  ansible.builtin.find:
+    paths: /srv/storage
+    hidden: true
+    file_type: any
+    recurse: false
+  register: nas_storage_directory_entries
+  when: nas_storage_directory.stat.exists and nas_storage_mount.rc == 1
+
+- name: Refuse to hide existing files below a new mount
+  ansible.builtin.assert:
+    that: nas_storage_directory_entries.matched == 0
+    fail_msg: /srv/storage contains files while unmounted; nothing will be hidden or deleted.
+  when: nas_storage_directory.stat.exists and nas_storage_mount.rc == 1
+
+- name: Read fstab before changing any storage
+  ansible.builtin.slurp:
+    src: /etc/fstab
+  register: nas_storage_fstab
+
+- name: Refuse an existing fstab entry for another filesystem at /srv/storage
+  ansible.builtin.assert:
+    that:
+      - nas_storage_record.stat.exists
+      - item.split()[0] == 'UUID=' ~ nas_storage_identity.filesystem_uuid
+      - item.split()[2] == 'ext4'
+    fail_msg: An existing fstab entry owns /srv/storage. It will not be overwritten.
+  vars:
+    nas_storage_mount_entry_pattern: '^\s*[^#\s]+\s+/srv/storage\s+'
+  loop: '{{ (nas_storage_fstab.content | b64decode).splitlines() | select("match", nas_storage_mount_entry_pattern) | list }}'
+
+- name: Install only the RAID and ext4 utilities
+  ansible.builtin.apt:
+    name: [mdadm, e2fsprogs]
+    state: present
+    install_recommends: false
+
+- name: Inspect whether mdadm configuration exists (including fresh-host check mode)
+  ansible.builtin.stat:
+    path: /etc/mdadm/mdadm.conf
+  register: nas_storage_mdadm_config_stat
+
+- name: Read mdadm configuration before first initialization
+  ansible.builtin.slurp:
+    src: /etc/mdadm/mdadm.conf
+  register: nas_storage_initial_mdadm_config
+  when: nas_storage_mdadm_config_stat.stat.exists and not nas_storage_record.stat.exists
+
+- name: Refuse an already reserved array name before erasing any disk
+  ansible.builtin.assert:
+    that: >-
+      (nas_storage_initial_mdadm_config.content | b64decode).splitlines()
+      | select('match', '^\s*ARRAY\s+/dev/md/storage\s+') | list | length == 0
+    fail_msg: /dev/md/storage is already reserved in mdadm.conf; no initialization will be attempted.
+  when: nas_storage_mdadm_config_stat.stat.exists and not nas_storage_record.stat.exists
+
+- name: Inspect the named array device
+  ansible.builtin.stat:
+    path: /dev/md/storage
+    follow: true
+  register: nas_storage_array
+
+- name: Perform the explicitly requested first initialization
+  ansible.builtin.import_tasks: initialize.yml
+  when: not nas_storage_record.stat.exists
+
+# An initial check-mode run cannot probe an array that has not been created.
+- name: Verify and maintain only the existing mirror
+  ansible.builtin.import_tasks: maintain.yml
+  when: nas_storage_record.stat.exists or not ansible_check_mode

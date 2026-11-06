@@ -1,0 +1,4 @@
+---
+- name: Manage the explicitly selected NAS mirror
+  ansible.builtin.import_tasks: manage.yml
+  when: nas_storage_enabled | bool

@@ -1,0 +1,6 @@
+---
+nas_storage_enabled: false
+# Supply a JSON boolean on the command line for the ONE initial apply only.
+nas_storage_initialize: false
+nas_storage_disks: []
+nas_storage_protected_disk: ""
