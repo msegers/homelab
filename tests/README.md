@@ -1,4 +1,4 @@
-# Valheim regression checks
+# Ansible regression checks
 
 Requires Ansible, the `community.docker` collection, PyYAML (included with
 Ansible), and Docker Compose v2. Run from the repository root:
@@ -39,3 +39,11 @@ It does not decrypt or assert the values in the real committed Vault files.
 A real host is still needed to verify first boot, gameplay, and idle shutdown
 with actual players. System timer configuration and project scoping are checked
 without starting services.
+
+`test_docker_networking.py` checks the ifupdown boot dependency and exercises the
+actual Ansible attachment/port assertions with healthy-but-detached, stopped,
+wrong-network, incomplete-endpoint, missing-port, and wildcard/wrong-address
+fixtures. It also renders the exact-address start condition, exercises it with
+fake `ip` output, and parses synthetic units with `systemd-analyze verify` when
+available. It never contacts Docker or the homelab or starts a unit. See
+`ansible/README.md` for owner-run deployment/reboot acceptance.

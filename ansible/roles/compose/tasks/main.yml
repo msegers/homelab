@@ -122,3 +122,7 @@
     wait_timeout: 180
   when: not ansible_check_mode
   no_log: true
+
+- name: Verify homelab network attachments independently of health checks
+  ansible.builtin.import_tasks: verify_networks.yml
+  when: not ansible_check_mode

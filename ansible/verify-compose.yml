@@ -1,0 +1,9 @@
+---
+# Read-only: safe to run after reboot without reconciling/recreating containers.
+- name: Verify homelab Docker network attachments
+  hosts: homelab_hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check the deployed homelab containers without changing them
+      ansible.builtin.import_tasks: roles/compose/tasks/verify_networks.yml

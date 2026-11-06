@@ -29,3 +29,7 @@ valheim_dashboard_allowed_networks: [192.168.68.0/24]
 valheim_dashboard_allowed_hosts: [lab.mathijs.se]
 # Ansible discovers and trusts only this Caddy container's private IPv4 peers.
 valheim_dashboard_proxy_container: homelab-proxy-1
+
+# Docker binds published ports to the Wi-Fi LAN address. This host uses ifupdown.
+docker_ifupdown_wait_online_interface: wlp0s20f3
+docker_ifupdown_wait_online_address: '{{ compose_bind_ip }}'

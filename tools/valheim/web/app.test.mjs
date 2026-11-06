@@ -8,11 +8,12 @@ const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 async function page(options = {}) {
-  const ids = new Map(['running', 'game', 'players', 'world', 'idle', 'message', 'world-message', 'running-world', 'saved-world', 'new-world', 'new-seed', 'select-world', 'delete-world', 'create-world']
+  const ids = new Map(['running', 'game', 'players', 'world', 'idle', 'message', 'world-message', 'auto-refresh', 'refresh-status', 'running-world', 'saved-world', 'new-world', 'new-seed', 'select-world', 'delete-world', 'create-world']
     .map(id => [id, { textContent: '', dataset: {}, value: '', disabled: true,
       replaceChildren(...children) { this.children = children; this.value = children[0]?.value || ''; },
       addEventListener(name, handler) { this[name] = handler; },
     }]));
+  ids.get('auto-refresh').checked = true;
   const buttons = ['start', 'stop', 'restart'].map(action => ({
     dataset: { action }, disabled: true,
     addEventListener(_name, handler) { this.click = handler; },
@@ -38,6 +39,7 @@ async function page(options = {}) {
         return { ok: true, json: async () => ({ ok: true, result: ['Home', 'Other'] }) };
       }
       if (path === '/api/status') {
+        if (options.statusWait) await options.statusWait;
         if (options.unavailable) return { ok: false, status: 503, json: async () => ({ ok: false, error: 'Helper unavailable' }) };
         return { ok: true, json: async () => ({ ok: true, result: {
           running: options.running ?? false, game_state: 'RUNNING', players: options.players ?? 0,
@@ -247,4 +249,60 @@ test('a successful retry replaces the form error with a success message', async 
   await ids.get('create-world').click();
   assert.equal(ids.get('world-message').textContent, 'Operation completed');
   assert.equal(ids.get('world-message').dataset.error, 'false');
+});
+
+test('auto-refresh can be paused and resumed without closing the tab', async () => {
+  const { ids, requests, poll } = await page();
+  assert.equal(ids.get('auto-refresh').checked, true);
+  const initial = requests.length;
+  await poll();
+  assert.equal(requests.length, initial + 2);
+  ids.get('auto-refresh').checked = false;
+  const paused = requests.length;
+  await poll();
+  await poll();
+  assert.equal(requests.length, paused);
+  ids.get('auto-refresh').checked = true;
+  await poll();
+  assert.equal(requests.length, paused + 2);
+});
+
+test('manual refresh and action results still work while polling is paused', async () => {
+  const { ids, buttons, requests } = await page();
+  ids.get('auto-refresh').checked = false;
+  const initial = requests.length;
+  await ids.get('refresh-status').click();
+  assert.equal(requests.length, initial + 2);
+  await buttons[0].click();
+  assert.equal(requests.length, initial + 5); // POST plus status/worlds.
+  assert.equal(ids.get('auto-refresh').checked, false);
+});
+
+test('slow refreshes cannot overlap manual refresh, polling, or actions', async () => {
+  const options = {};
+  const { ids, buttons, requests, poll } = await page(options);
+  let finish;
+  options.statusWait = new Promise(resolve => { finish = resolve; });
+  const initial = requests.length;
+  const pending = poll();
+  assert.equal(ids.get('refresh-status').disabled, true);
+  assert.ok(buttons.every(button => button.disabled));
+  await poll();
+  await ids.get('refresh-status').click();
+  await buttons[0].click();
+  assert.equal(requests.length, initial + 1);
+  finish();
+  await pending;
+  assert.equal(requests.length, initial + 2);
+  assert.equal(ids.get('refresh-status').disabled, false);
+});
+
+test('manual refresh is available to recover after status failure', async () => {
+  const options = { unavailable: true };
+  const { ids } = await page(options);
+  ids.get('auto-refresh').checked = false;
+  assert.equal(ids.get('refresh-status').disabled, false);
+  options.unavailable = false;
+  await ids.get('refresh-status').click();
+  assert.equal(ids.get('running').textContent, 'Stopped');
 });

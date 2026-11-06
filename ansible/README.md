@@ -203,3 +203,153 @@ curl -I --resolve pihole.mathijs.se:443:192.168.68.111 https://pihole.mathijs.se
 
 Before switching public website traffic, complete the
 [HTTPS checklist](../docs/compose.md#https-and-public-cutover).
+
+### Docker networking after reboot (Debian/ifupdown Wi-Fi)
+
+Read-only inspection and owner-provided diagnostics confirmed **ifupdown** with
+`allow-hotplug wlp0s20f3` and `iface wlp0s20f3 inet dhcp`; NetworkManager/networkd
+are inactive. Docker CE is `29.9.3`, Compose is `5.7.0`. Do not print the complete
+interfaces file: it may contain the Wi-Fi password.
+
+The November 6 boot journal confirms this sequence (seconds since boot):
+
+| Time | Event |
+| --- | --- |
+| 4.24 | `ifup@wlp0s20f3.service` declared started (`Type=simple`), DHCP still running. |
+| 4.88 | Native ifupdown waiter finished; Docker started. |
+| 6.98–7.27 | Caddy/Pi-hole failed to bind `192.168.68.111:80` / `:53`: `cannot assign requested address`. |
+| 15.24 | DHCP finally leased `192.168.68.111`. |
+
+The original fix (enabling the packaged waiter in `ifup` mode) was insufficient:
+`ifquery --state` can succeed while DHCP is still running. `networking.service`
+only raises auto interfaces, not this hotplug Wi-Fi interface.
+
+1. Docker restored `restart: unless-stopped` containers before the Wi-Fi LAN IP
+   exists. Pi-hole and Caddy publish ports on that **specific** IP. Merely reaching
+   `network-online.target` is insufficient without an effective readiness waiter.
+2. A port bind failed with `cannot assign requested address`. Docker 29's reported
+   endpoint-cleanup regression can persist an empty `NetworkSettings.Networks`.
+   A subsequent start succeeds with only loopback; restarting dockerd cannot
+   recreate the lost attachment. A local Pi-hole health check can still pass.
+
+This matches [Moby #53928](https://github.com/moby/moby/issues/53928), marked
+duplicate of [#51758](https://github.com/moby/moby/issues/51758). On **2026-11-06**,
+the fix [#52480](https://github.com/moby/moby/pull/52480) is merged (November 2)
+and included in [29.10.0-rc.1 release notes](https://github.com/moby/moby/releases/tag/docker-v29.10.0-rc.1).
+However, the latest stable release, Debian 13 stable repository listing, and the
+host's cached APT candidate remain **29.9.3**; no stable fixed release was found.
+The alternative PR #53961 is still open. Recheck releases before proposing an
+upgrade; this change installs neither a release candidate nor a downgrade and
+does not change the installed Docker version. Compose's `depends_on` only
+orders an explicit Compose deployment, not dockerd's reboot-time restoration.
+The default Compose bridge network is correct; no host networking, DNS upstream
+change, extra Compose boot service, or automatic reconnect is needed.
+
+The host selects `docker_ifupdown_wait_online_interface: wlp0s20f3` and
+`docker_ifupdown_wait_online_address: '{{ compose_bind_ip }}'`. Ansible checks the
+stack, auto/hotplug configuration, and current assignment of that address. It
+preserves the interfaces file and other networking defaults and retains the
+native waiter. The correction is an **instance-only** drop-in for
+`ifup@wlp0s20f3.service`:
+
+```ini
+[Service]
+Type=oneshot
+```
+
+Systemd must now wait for `ifup` (including DHCP) to finish successfully, using
+the existing five-minute service timeout. No other interface unit is changed.
+Docker's drop-in requires and orders after that instance as well as the waiter:
+
+```ini
+[Unit]
+Requires=ifupdown-wait-online.service ifup@wlp0s20f3.service
+After=ifupdown-wait-online.service ifup@wlp0s20f3.service
+
+[Service]
+ExecCondition=/bin/sh -ec '/usr/sbin/ip -4 -o address show dev wlp0s20f3 scope global | /usr/bin/grep -Fq " inet 192.168.68.111/"'
+```
+
+`Requires` plus `After` prevents Docker starting if `ifup` fails. The final
+`ExecCondition` uses existing OS utilities to check the **exact IPv4 address on
+the selected interface**, not merely carrier, IPv6, a default route, or an
+ifupdown state record. It runs once with no retry or delay. Exit 1 skips startup
+without triggering Docker's existing `Restart=always` policy; a wrong DHCP lease
+therefore cannot start containers and damage their saved networking. The skip
+is visible in systemd status/journal and the verifier fails when Docker is down.
+No custom executable, polling loop, watchdog, internet/DNS probe, or automatic
+recovery is installed. Other networking stacks are not configured implicitly.
+
+Systemd is reloaded only when either drop-in changes; **Docker/networking are not
+restarted on apply**. The one-shot semantics take effect on the next start of the
+Wi-Fi unit. This prevents the demonstrated trigger but **does not repair already
+lost attachments** or patch Docker's underlying bug. After correcting a failed
+lease, the owner must explicitly decide when to start Docker; there is no retry
+agent.
+
+#### Owner-run deployment and controlled reboot
+
+Run these commands from `ansible/` only when ready. The targeted tag applies just
+the readiness configuration: it does not run package installation, Compose,
+Valheim, or any restart handler. Omit `--diff` to avoid exposing unrelated secrets.
+
+```bash
+ansible-playbook site.yml --tags docker-networking --check --ask-vault-pass --ask-become-pass
+ansible-playbook site.yml --tags docker-networking --ask-vault-pass --ask-become-pass
+ansible-playbook site.yml --tags docker-networking --ask-vault-pass --ask-become-pass
+ansible-playbook verify-compose.yml --ask-vault-pass --ask-become-pass
+```
+
+The second apply should report no changes. The separate verifier is read-only
+and does **not** run `compose up`. It first requires Docker already active so
+its CLI queries cannot inadvertently start Docker through socket activation.
+All three expected containers must be running
+with a `homelab_default` network ID, endpoint ID, IPv4 address, and gateway, even
+if reported healthy. Caddy must also publish TCP 80/443 and Pi-hole TCP/UDP 53
+on exactly `compose_bind_ip`, with the intended host ports and no wildcard
+binding for those ports. The verifier reads **actual** `NetworkSettings.Ports`,
+not just the intended `HostConfig.PortBindings`. It cannot prove that firewall
+rules or application traffic work; DNS and HTTPS acceptance checks remain needed.
+Normal full deployments also run this check after Compose.
+It intentionally excludes Valheim, which may be stopped by its idle controller.
+No volumes, Caddy configuration/certificates, passwords, or saves are modified.
+
+Before reboot, use a privileged shell on the host to confirm configuration and
+inspect the current/previous boot for the initial error:
+
+```bash
+systemctl is-enabled ifupdown-wait-online.service
+systemctl cat docker.service
+systemctl cat ifup@wlp0s20f3.service
+ip -4 address show dev wlp0s20f3
+ifquery --list --allow=auto
+ifquery --list --allow=hotplug
+ifquery --state wlp0s20f3
+journalctl -b -o short-monotonic -u docker.service -u networking.service -u ifup@wlp0s20f3.service --no-pager
+# If the failed boot is older and persistent journals exist:
+journalctl -b -1 -u docker.service --no-pager
+```
+
+Look for port-bind failures, `cannot assign requested address`, endpoint errors,
+or conflicting ports. The old nftables table-deletion messages alone do not prove
+a bridge failure; the explicit bind errors and DHCP timestamps establish this race.
+If the verifier fails, retain diagnostics and decide on manual recovery; do not
+delete networks, remove volumes, or force-recreate the whole stack.
+
+Schedule a maintenance window (including Valheim players), have local-console
+access, record the successful baseline verifier/DNS/HTTPS results, then manually
+reboot the host from that privileged shell with `systemctl reboot`. After SSH
+returns, **before** running any deployment or repair:
+
+1. Run `verify-compose.yml` again; require all attachment checks to pass.
+2. Inspect `journalctl -b -u ifupdown-wait-online.service -u docker.service` and
+   `systemd-analyze critical-chain docker.service`. Confirm the **Wi-Fi ifup
+   process completed and DHCP assigned the intended IPv4 address before Docker
+   started**, not merely that the waiter finished. There must be no bind/endpoint
+   failures or skipped Docker address condition.
+3. Repeat the DNS and HTTPS checks above, including Home Tools/public website as
+   appropriate. Confirm Pi-hole data and Caddy certificates remain intact and
+   other services (including expected Valheim state) are unchanged.
+
+A local syntax/regression pass is not reboot acceptance. No reboot or deployment
+is performed by the local tests or the read-only verifier.

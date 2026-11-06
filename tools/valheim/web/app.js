@@ -3,6 +3,7 @@
 const buttons = [...document.querySelectorAll('button[data-action]')];
 let token = '';
 let busy = false;
+let refreshing = false;
 let known = false;
 let running = false;
 let selectedWorld = '';
@@ -24,11 +25,12 @@ function worldMessage(message, error = false) {
 }
 
 function updateControls() {
+  element('refresh-status').disabled = busy || refreshing;
   for (const button of buttons) {
-    button.disabled = busy || !known || !token ||
+    button.disabled = busy || refreshing || !known || !token ||
       (button.dataset.action === 'start' ? running : !running);
   }
-  const unavailable = busy || !known || !token;
+  const unavailable = busy || refreshing || !known || !token;
   const worldsUnavailable = unavailable || !worldsKnown;
   for (const id of ['saved-world', 'new-world', 'new-seed', 'create-world']) element(id).disabled = worldsUnavailable;
   const chosen = element('saved-world').value;
@@ -52,6 +54,9 @@ async function api(path, action, fields = {}) {
 }
 
 async function refresh() {
+  if (refreshing) return false;
+  refreshing = true;
+  updateControls();
   try {
     const status = await api('/api/status');
     running = status.running;
@@ -95,12 +100,13 @@ async function refresh() {
     text('message', error.message);
     return false;
   } finally {
+    refreshing = false;
     updateControls();
   }
 }
 
 async function worldAction(action, world, confirmation, seed) {
-  if (busy || !known || !worldsKnown || !token) return;
+  if (busy || refreshing || !known || !worldsKnown || !token) return;
   if (!/^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$/.test(world)) {
     worldMessage('Enter a world name using letters, numbers, underscores or hyphens (up to 128 characters).', true);
     return;
@@ -154,6 +160,7 @@ element('delete-world').addEventListener('click', () => {
 
 for (const button of buttons) {
   button.addEventListener('click', async () => {
+    if (busy || refreshing) return;
     const action = button.dataset.action;
     if (action !== 'start' && !confirm(`${action === 'stop' ? 'Stop' : 'Restart'} the server? Connected players will be disconnected.`)) return;
     busy = true;
@@ -171,6 +178,10 @@ for (const button of buttons) {
   });
 }
 
+element('refresh-status').addEventListener('click', () => {
+  if (!busy) return refresh();
+});
+
 async function initialize() {
   try {
     const response = await fetch('/api/session', { cache: 'no-store' });
@@ -183,4 +194,6 @@ async function initialize() {
 }
 
 initialize();
-setInterval(() => { if (!busy) refresh(); }, 15000);
+setInterval(() => {
+  if (!busy && !refreshing && element('auto-refresh').checked) return refresh();
+}, 15000);

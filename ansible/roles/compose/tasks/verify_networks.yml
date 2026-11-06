@@ -1,0 +1,65 @@
+---
+# Inspect only non-secret fields: full container inspection includes passwords.
+# Fixed names match this role's project name, services, and default replica count.
+- name: Require Docker already active without triggering socket activation
+  ansible.builtin.command:
+    argv: [systemctl, is-active, docker.service]
+  changed_when: false
+  check_mode: false
+
+- name: Inspect homelab container network attachments (read-only)
+  ansible.builtin.command:
+    argv:
+      - docker
+      - --context
+      - default
+      - inspect
+      - --format
+      - '{"running":{{ "{{json .State.Running}}" }},"networks":{{ "{{json .NetworkSettings.Networks}}" }},"ports":{{ "{{json .NetworkSettings.Ports}}" }}}'
+      - 'homelab-{{ item }}-1'
+  loop: [proxy, website, pihole]
+  register: compose_network_inspections
+  changed_when: false
+  check_mode: false
+
+- name: Require running containers with usable homelab default-network endpoints
+  ansible.builtin.assert:
+    that:
+      - inspection.running | bool
+      - endpoint.get('NetworkID', '') | length > 0
+      - endpoint.get('EndpointID', '') | length > 0
+      - endpoint.get('IPAddress', '') | length > 0
+      - endpoint.get('Gateway', '') | length > 0
+    fail_msg: >-
+      homelab-{{ item.item }}-1 is stopped or lacks a usable homelab_default
+      attachment, regardless of container health. No repair was attempted.
+      Inspect Docker boot logs for port-bind/network errors before manually recovering it.
+  vars:
+    inspection: '{{ item.stdout | from_json }}'
+    endpoint: "{{ (inspection.networks | default({}, true)).get('homelab_default', {}) }}"
+  loop: '{{ compose_network_inspections.results }}'
+  loop_control:
+    label: 'homelab-{{ item.item }}-1'
+
+# HostConfig.PortBindings describes intent, not whether Docker published ports.
+# Check the actual mappings, including TCP/UDP and the exact LAN-only bind IP.
+- name: Require the intended LAN-only published ports
+  ansible.builtin.assert:
+    that:
+      - "bindings.get(item.port, []) == [{'HostIp': compose_bind_ip, 'HostPort': item.host_port}]"
+    fail_msg: >-
+      homelab-{{ item.service }}-1 lacks the expected {{ compose_bind_ip }}:{{ item.host_port }}
+      mapping for {{ item.port }}, or publishes it on an unintended address.
+      No repair was attempted. Inspect Docker boot logs and port bindings.
+  vars:
+    inspection: >-
+      {{ (compose_network_inspections.results | selectattr('item', 'equalto', item.service)
+          | first).stdout | from_json }}
+    bindings: '{{ inspection.ports | default({}, true) }}'
+  loop:
+    - {service: proxy, port: '80/tcp', host_port: '80'}
+    - {service: proxy, port: '443/tcp', host_port: '443'}
+    - {service: pihole, port: '53/tcp', host_port: '53'}
+    - {service: pihole, port: '53/udp', host_port: '53'}
+  loop_control:
+    label: 'homelab-{{ item.service }}-1 {{ item.port }}'

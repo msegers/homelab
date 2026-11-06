@@ -1,0 +1,4 @@
+---
+# Opt in only on hosts confirmed to use ifupdown (not NetworkManager/networkd).
+docker_ifupdown_wait_online_interface: ""
+docker_ifupdown_wait_online_address: ""

@@ -35,6 +35,11 @@
     state: present
     update_cache: true
 
+- name: Configure native ifupdown readiness before Docker startup
+  ansible.builtin.import_tasks: ifupdown.yml
+  when: docker_ifupdown_wait_online_interface | length > 0
+  tags: [docker-networking]
+
 - name: Enable and start Docker
   ansible.builtin.systemd:
     name: docker

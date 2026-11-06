@@ -1,0 +1,118 @@
+---
+- name: Inspect the networking services
+  ansible.builtin.service_facts:
+
+# networking.service is Type=oneshot/RemainAfterExit, normally active (exited).
+# service_facts can report it as stopped because it has no running process.
+- name: Read the ifupdown systemd active state
+  ansible.builtin.command:
+    argv: [systemctl, show, networking.service, --property=ActiveState, --value]
+  register: docker_ifupdown_active_state
+  changed_when: false
+  check_mode: false
+
+- name: Require the confirmed ifupdown networking stack
+  ansible.builtin.assert:
+    that:
+      - docker_ifupdown_active_state.stdout | trim == 'active'
+      - ansible_facts.services.get('NetworkManager.service', {}).get('state') != 'running'
+      - ansible_facts.services.get('systemd-networkd.service', {}).get('state') != 'running'
+      - docker_ifupdown_wait_online_interface is match('^[A-Za-z0-9_.:-]+$')
+      - docker_ifupdown_wait_online_address is match('^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$')
+    fail_msg: This readiness configuration requires active ifupdown, an explicit interface and bind IPv4 address; do not use it for NetworkManager or networkd.
+
+- name: Require the selected interface to be configured by ifupdown
+  ansible.builtin.command:
+    argv: [/usr/sbin/ifquery, --list, '--allow={{ item }}']
+  loop: [auto, hotplug]
+  register: docker_ifupdown_interfaces
+  changed_when: false
+  check_mode: false
+
+- name: Check the selected ifupdown interface
+  ansible.builtin.assert:
+    that: docker_ifupdown_wait_online_interface in (docker_ifupdown_interfaces.results | map(attribute='stdout_lines') | flatten)
+    fail_msg: The selected Docker readiness interface is not configured in ifupdown.
+
+- name: Inspect the selected interface's current IPv4 addresses
+  ansible.builtin.command:
+    argv: [/usr/sbin/ip, -j, -4, address, show, dev, '{{ docker_ifupdown_wait_online_interface }}']
+  register: docker_ifupdown_addresses
+  changed_when: false
+  check_mode: false
+
+- name: Require the intended bind address on the selected interface
+  ansible.builtin.assert:
+    that: >-
+      docker_ifupdown_wait_online_address in
+      (docker_ifupdown_addresses.stdout | from_json | map(attribute='addr_info')
+       | flatten | map(attribute='local') | list)
+    fail_msg: The intended Docker bind IPv4 address is not assigned to the selected ifupdown interface.
+
+# Preserve the rest of this file, especially any local networking settings.
+- name: Select the native ifupdown readiness method and interface
+  ansible.builtin.lineinfile:
+    path: /etc/default/networking
+    regexp: '^#?{{ item.key }}='
+    line: '{{ item.key }}={{ item.value }}'
+  loop:
+    - {key: WAIT_ONLINE_METHOD, value: ifup}
+    - {key: WAIT_ONLINE_IFACE, value: '{{ docker_ifupdown_wait_online_interface }}'}
+
+# Enable for next boot; do not run the waiter or restart networking on deployment.
+- name: Enable the native ifupdown wait-online service
+  ansible.builtin.systemd_service:
+    name: ifupdown-wait-online.service
+    enabled: true
+
+- name: Create Docker systemd drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Create the selected ifupdown instance drop-in directory
+  ansible.builtin.file:
+    path: '/etc/systemd/system/ifup@{{ docker_ifupdown_wait_online_interface }}.service.d'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# Debian's default Type=simple declares success before ifup finishes DHCP.
+# Limit the correction to the confirmed Wi-Fi instance; do not change other NICs.
+- name: Wait for successful Wi-Fi ifup completion rather than process launch
+  ansible.builtin.copy:
+    dest: '/etc/systemd/system/ifup@{{ docker_ifupdown_wait_online_interface }}.service.d/online.conf'
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Service]
+      Type=oneshot
+  register: docker_ifupdown_instance_dropin
+
+# Wants=network-online.target alone allows Docker to start if the waiter fails.
+- name: Require successful ifupdown readiness before Docker starts
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/docker.service.d/ifupdown-online.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Requires=ifupdown-wait-online.service ifup@{{ docker_ifupdown_wait_online_interface }}.service
+      After=ifupdown-wait-online.service ifup@{{ docker_ifupdown_wait_online_interface }}.service
+
+      [Service]
+      # Check the exact address after DHCP; no retry, sleep, or network mutation.
+      # ExecCondition exit 1 skips startup without triggering Restart=always.
+      ExecCondition=/bin/sh -ec '/usr/sbin/ip -4 -o address show dev {{ docker_ifupdown_wait_online_interface }} scope global | /usr/bin/grep -Fq " inet {{ docker_ifupdown_wait_online_address }}/"'
+  register: docker_ifupdown_dropin
+
+- name: Reload systemd without restarting Docker
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: docker_ifupdown_dropin is changed or docker_ifupdown_instance_dropin is changed

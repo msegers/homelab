@@ -15,6 +15,10 @@ nav { display: flex; gap: 24px; margin-bottom: 32px; }
 a { color: #e7cf9b; }
 label { display: block; margin: 20px 0 8px; }
 input, select { width: 100%; padding: 12px; margin-bottom: 16px; font: inherit; color: inherit; background: #141c19; border: 1px solid #627668; border-radius: 8px; }
+.refresh-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }
+.refresh-controls label { display: flex; align-items: center; gap: 8px; margin: 0; color: #adbbb2; font-size: .85rem; }
+.refresh-controls input { width: auto; padding: 0; margin: 0; accent-color: #dfc58b; }
+.refresh-controls button { padding: 6px 12px; font-size: .85rem; }
 p { line-height: 1.5; }
 .field-hint { color: #adbbb2; font-size: .85rem; margin: -8px 0 16px; }
 .operation-message { margin-bottom: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

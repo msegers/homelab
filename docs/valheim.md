@@ -226,6 +226,17 @@ first start; terrain still generates in the game. Creating/selecting while stopp
 does not start the server. See [seed implementation and acceptance checks](../tools/valheim/docs/world-seeds.md).
 Manual backups and updates remain CLI-only.
 
+**Auto-refresh (15s)** can be unchecked to leave the tab open without background
+dashboard requests. **Refresh now** still fetches current status/worlds, and
+actions refresh their results even while polling is paused. An in-flight refresh
+finishes normally; displayed values can become stale while paused. The toggle
+applies to this tab and resets to enabled on page reload. Refreshes in one tab
+cannot overlap, but other tabs may still contend for the broker lock.
+
+Each dashboard refresh checks Docker and, for a running game, makes Steam A2S
+player-count queries; there is no shared status cache. Pausing the dashboard
+does **not** disable the independent idle-shutdown monitor or its player checks.
+
 The web account cannot read game secrets, invoke sudo, or access Docker. Its
 Unix-socket broker allows only typed lifecycle/world operations. The allowed LAN is
 the access boundary: **anyone on that subnet can control the game**. Browser-to-Caddy
