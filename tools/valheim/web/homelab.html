@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Overview · Homelab</title>
+    <link rel="stylesheet" href="/app.css">
+    <link rel="stylesheet" href="/homelab.css">
+    <script src="/homelab.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <nav aria-label="Home tools"><a href="/homelab" aria-current="page">Home Tools</a><a href="/valheim">Valheim</a></nav>
+      <header>
+        <p class="eyebrow">HOME TOOLS / PRIVATE OVERVIEW</p>
+        <h1>Homelab</h1>
+        <p class="subtitle">Your server at a glance.</p>
+      </header>
+      <div class="refresh-controls"><button id="refresh" type="button">Refresh statistics</button></div>
+      <p id="message" role="status" aria-live="polite">Loading statistics…</p>
+      <section aria-labelledby="host-heading">
+        <h2 id="host-heading">Host</h2>
+        <div class="host-layout">
+          <dl class="host-specs" aria-label="Machine specifications">
+            <div><dt>Machine</dt><dd id="machine-model">—</dd></div>
+            <div><dt>Processor</dt><dd id="cpu-model">—</dd></div>
+            <div><dt>Cores / threads</dt><dd id="cpu-topology">—</dd></div>
+            <div><dt>RAM · OS usable</dt><dd id="ram-total">—</dd></div>
+          </dl>
+          <dl class="host-stats" aria-label="Current host statistics">
+            <div><dt title="100% means all logical cores fully used">CPU · short sample</dt><dd id="cpu">—</dd></div>
+            <div><dt>Memory · used / total</dt><dd id="memory">—</dd></div>
+            <div><dt>Uptime</dt><dd id="uptime">—</dd></div>
+            <div><dt>Load average · 1 / 5 / 15 min</dt><dd id="load">—</dd></div>
+          </dl>
+        </div>
+      </section>
+      <section aria-labelledby="storage-heading">
+        <h2 id="storage-heading">Disk space</h2>
+        <div id="disks" class="disk-list"></div>
+      </section>
+      <section aria-labelledby="services-heading">
+        <h2 id="services-heading">Docker Compose services</h2>
+        <p id="service-summary">Waiting for snapshot…</p>
+        <div class="table-scroll" tabindex="0" role="region" aria-label="Container statistics">
+          <table>
+            <thead><tr><th scope="col">Container</th><th scope="col">Status</th><th scope="col" title="100% means one logical core fully used; containers can exceed 100%">CPU</th><th scope="col">Memory / limit</th><th scope="col">Network RX / TX</th><th scope="col">Disk read / write</th><th scope="col">PIDs</th></tr></thead>
+            <tbody id="services"></tbody>
+          </table>
+        </div>
+      </section>
+      <footer>
+        Read-only snapshots · 10-second cache · No background polling
+      </footer>
+    </main>
+  </body>
+</html>

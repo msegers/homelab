@@ -28,6 +28,7 @@
 
 ## Checks
 
+- When making changes, check whether the Homelab dashboard (`tools/valheim/`, `/homelab`) needs corresponding updates to its service list, metrics, UI, tests, or documentation.
 - Rust: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
   `cargo test` from `tools/valheim/`.
 - Ansible regression tests: `python3 -m unittest discover -s tests -v`.

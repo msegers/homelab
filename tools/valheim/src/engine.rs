@@ -1,4 +1,5 @@
-//! Docker is invoked only here, with an explicit context/project/service.
+//! Mutating/game-specific Docker operations, with explicit context/project/service.
+//! The separate metrics module only invokes fixed read-only ps/stats commands.
 use crate::{
     a2s,
     controller::{Config, Container, PlayerObservation, supported_observation},
