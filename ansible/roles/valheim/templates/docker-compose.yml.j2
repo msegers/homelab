@@ -17,7 +17,11 @@ services:
     volumes:
       - {{ (valheim_config_dir ~ ':/config') | to_json }}
       - {{ (valheim_worlds_dir ~ ':/config/worlds_local') | to_json }}
-      - {{ (valheim_backups_dir ~ ':/config/backups') | to_json }}
+      - type: bind
+        source: {{ valheim_backups_dir | to_json }}
+        target: /config/backups
+        bind:
+          create_host_path: false
       - {{ (valheim_data_dir ~ ':/opt/valheim') | to_json }}
     environment:
       SERVER_NAME: {{ valheim_server_name | to_json | replace('$', '$$') }}

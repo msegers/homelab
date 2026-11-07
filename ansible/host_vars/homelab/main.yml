@@ -15,10 +15,28 @@ compose_home_tools_allowed_networks: [192.168.68.0/24]
 compose_pihole_local_hosts:
   - "{{ compose_bind_ip }} lab.mathijs.se"
   - "{{ compose_bind_ip }} pihole.mathijs.se"
+  - "{{ compose_bind_ip }} photos.mathijs.se"
+  - "{{ compose_bind_ip }} shared.mathijs.se"
+compose_immich_enabled: true
+compose_immich_domain: photos.mathijs.se
+compose_immich_allowed_networks: [192.168.68.0/24]
+
+samba_enabled: true
+samba_bind_ip: '{{ compose_bind_ip }}'
+samba_allowed_networks: [192.168.68.0/24]
+samba_network_ready_unit: 'ifup@{{ docker_ifupdown_wait_online_interface }}.service'
+samba_password: '{{ vault_samba_password }}'
+
+immich_enabled: true
+immich_db_password: '{{ vault_immich_db_password }}'
 
 valheim_enabled: true
-# Docker image's scheduled backups remain off until NAS storage is ready.
-valheim_backups_enabled: false
+# Only backup output moves to RAID; live saves and existing SSD archives stay put.
+valheim_backups_enabled: true
+valheim_backups_dir: /srv/storage/backups/valheim
+valheim_required_mounts: [/srv/storage]
+valheim_required_mount_uuids:
+  /srv/storage: '{{ nas_storage_expected_uuid }}'
 # Independent safety archives before world changes; deletion always requires one.
 valheim_pre_change_backups: true
 valheim_idle_shutdown_enabled: true
@@ -36,6 +54,7 @@ docker_ifupdown_wait_online_address: '{{ compose_bind_ip }}'
 
 # Whole-disk RAID 1. Initialization is never enabled in committed inventory.
 nas_storage_enabled: true
+nas_storage_expected_uuid: 3b5ea8e0-2a29-42b5-bf10-84323fd768f1
 nas_storage_protected_disk: /dev/disk/by-id/ata-Samsung_SSD_850_EVO_500GB_S21JNXAG412018R
 nas_storage_disks:
   - path: /dev/disk/by-id/ata-WDC_WD10EZEX-08WN4A0_WD-WCC6Y0UNLFLH

@@ -86,6 +86,7 @@ fn fixture() -> (tempfile::TempDir, Controller<Fake>) {
         worlds_dir: root.join("saves"),
         config_dir: root.join("config"),
         backups_dir: root.join("backups"),
+        required_mount_uuids: HashMap::new(),
         pre_change_backups: true,
         project_dir: root.join("stack"),
         stop_timeout: 120,
@@ -118,6 +119,34 @@ fn fixture() -> (tempfile::TempDir, Controller<Fake>) {
 }
 fn tick(controller: &Controller<Fake>, now: u64) -> String {
     controller.idle_at(now as f64, 1_700_000_000.0 + now as f64, "boot-1")
+}
+
+#[test]
+fn missing_or_foreign_raid_blocks_start_and_backup_without_stopping_game_or_creating_files() {
+    for missing in [true, false] {
+        let (_directory, mut controller) = fixture();
+        let mount = if missing {
+            controller.config.backups_dir.clone()
+        } else {
+            "/".into()
+        };
+        controller
+            .config
+            .required_mount_uuids
+            .insert(mount, "00000000-0000-0000-0000-000000000000".into());
+        assert!(controller.start(false).is_err());
+        assert!(controller.backup().is_err());
+        assert!(controller.archive().is_err());
+        assert!(controller.engine.info.borrow().as_ref().unwrap().running);
+        assert_eq!(controller.engine.starts.get(), 0);
+        assert_eq!(controller.engine.stops.get(), 0);
+        assert_eq!(
+            fs::read_dir(&controller.config.backups_dir)
+                .unwrap()
+                .count(),
+            0
+        );
+    }
 }
 
 #[test]

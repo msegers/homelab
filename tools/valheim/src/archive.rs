@@ -19,6 +19,7 @@ pub fn create(config: &Config, world: &str) -> Result<String> {
 }
 
 pub fn create_named(config: &Config, world: &str, filename: &str) -> Result<String> {
+    config.verify_storage()?;
     let destination =
         fs::canonicalize(&config.backups_dir).context("Backup destination missing")?;
     let entries = [

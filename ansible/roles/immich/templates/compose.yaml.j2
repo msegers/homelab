@@ -1,0 +1,93 @@
+# Managed by Ansible. Based on the official v3.3.6 release Compose, retrieved 2026-11-07.
+# Local changes: mount safety, private proxy network, SSD caches, resource/log limits,
+# and restart ownership delegated to the mount-dependent systemd unit.
+name: homelab-immich
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+
+services:
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION}
+    volumes:
+      - type: bind
+        source: ${UPLOAD_LOCATION}
+        target: /data
+        bind:
+          create_host_path: false
+      - /etc/localtime:/etc/localtime:ro
+    env_file: [.env]
+    depends_on:
+      redis:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+    restart: 'no'
+    healthcheck:
+      disable: false
+    mem_limit: {{ immich_server_memory }}
+    cpus: 2
+    logging: *logging
+    networks:
+      default:
+      proxy:
+        aliases: [homelab-immich]
+    # No published port: Caddy is the only LAN entry point.
+
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION}
+    volumes:
+      - type: bind
+        source: {{ immich_state_dir }}/model-cache
+        target: /cache
+        bind:
+          create_host_path: false
+    env_file: [.env]
+    restart: 'no'
+    healthcheck:
+      disable: false
+    mem_limit: {{ immich_ml_memory }}
+    cpus: 2
+    logging: *logging
+
+  redis:
+    image: {{ immich_redis_image }}
+    volumes:
+      - type: bind
+        source: {{ immich_state_dir }}/redis
+        target: /data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: redis-cli ping | grep -q PONG || exit 1
+    restart: 'no'
+    mem_limit: {{ immich_redis_memory }}
+    logging: *logging
+
+  database:
+    image: {{ immich_postgres_image }}
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_DB: ${DB_DATABASE_NAME}
+      POSTGRES_INITDB_ARGS: --data-checksums
+    volumes:
+      - type: bind
+        source: ${DB_DATA_LOCATION}
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
+    shm_size: 128mb
+    restart: 'no'
+    healthcheck:
+      disable: false
+    mem_limit: {{ immich_database_memory }}
+    logging: *logging
+
+networks:
+  proxy:
+    external: true
+    name: {{ immich_proxy_network }}

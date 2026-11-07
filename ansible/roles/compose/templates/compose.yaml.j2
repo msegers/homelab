@@ -27,6 +27,10 @@ services:
       HOME_TOOLS_ALLOWED_NETWORKS: {{ compose_home_tools_allowed_networks | join(' ') | to_json | replace('$', '$$') }}
       HOME_TOOLS_UPSTREAM: {{ (compose_bind_ip ~ ':' ~ (compose_home_tools_port | int)) | to_json | replace('$', '$$') }}
 {% endif %}
+{% if compose_immich_enabled | bool %}
+      IMMICH_DOMAIN: {{ compose_immich_domain | to_json }}
+      IMMICH_ALLOWED_NETWORKS: {{ compose_immich_allowed_networks | join(' ') | to_json }}
+{% endif %}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

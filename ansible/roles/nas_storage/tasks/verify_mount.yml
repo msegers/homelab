@@ -1,0 +1,23 @@
+---
+# Shared preflight for consumers, including independent service playbooks.
+- name: Require an explicitly approved storage filesystem
+  ansible.builtin.assert:
+    that: nas_storage_expected_uuid is match('^[0-9a-f-]{36}$')
+    fail_msg: Set nas_storage_expected_uuid from the existing RAID filesystem; never initialize disks to satisfy this check.
+
+- name: Inspect the consumer storage mount without creating directories
+  ansible.builtin.command:
+    argv: [/usr/bin/findmnt, --json, --mountpoint, /srv/storage, --output, 'UUID,FSTYPE,TARGET,OPTIONS']
+  register: storage_consumer_mount
+  changed_when: false
+  check_mode: false
+
+- name: Refuse consumer writes to missing foreign or read-only storage
+  ansible.builtin.assert:
+    that:
+      - mounted.uuid == nas_storage_expected_uuid
+      - mounted.fstype == 'ext4'
+      - mounted.target == '/srv/storage'
+      - "'rw' in mounted.options.split(',')"
+  vars:
+    mounted: '{{ (storage_consumer_mount.stdout | from_json).filesystems[0] }}'

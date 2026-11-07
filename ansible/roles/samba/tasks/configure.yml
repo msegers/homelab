@@ -1,0 +1,198 @@
+---
+- name: Validate the private share settings
+  ansible.builtin.assert:
+    that:
+      - samba_bind_ip in ansible_all_ipv4_addresses
+      - samba_bind_ip is match('^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)')
+      - samba_share_name is match('^[A-Za-z][A-Za-z0-9_-]{0,31}$')
+      - samba_user is match('^[a-z][a-z0-9_-]{0,31}$')
+      - samba_group is match('^[a-z][a-z0-9_-]{0,31}$')
+      - samba_user not in ['root', 'nobody', 'valheim-game', ansible_user | default('')]
+      - samba_group not in ['root', 'docker', 'sudo', 'wheel', 'nogroup', 'valheim-game']
+      - samba_share_path == '/srv/storage/shared'
+      - samba_allowed_networks | length > 0
+      - samba_network_ready_unit == '' or samba_network_ready_unit is match('^[A-Za-z0-9@_.:-]+\.service$')
+
+- name: Validate explicit private Samba client networks
+  ansible.builtin.assert:
+    that:
+      - item is match('^(192\.168\.[0-9]{1,3}\.[0-9]{1,3}/(1[6-9]|2[0-9]|3[0-2])|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/(8|9|[12][0-9]|3[0-2])|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}/(1[2-9]|2[0-9]|3[0-2])|127\.0\.0\.0/8)$')
+  loop: '{{ samba_allowed_networks }}'
+
+- name: Require the vaulted Samba password
+  ansible.builtin.assert:
+    that:
+      - samba_password is defined
+      - samba_password | length >= 12
+      - "'\n' not in samba_password and '\r' not in samba_password"
+  no_log: true
+
+- name: Verify storage before configuring Samba
+  ansible.builtin.import_role:
+    name: nas_storage
+    tasks_from: verify_mount
+
+- name: Inspect Debian's package-supplied Samba configuration template
+  ansible.builtin.stat:
+    path: /usr/share/samba/smb.conf
+    follow: false
+  register: samba_stock_config
+
+- name: Check whether an existing Samba service is active
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, is-active, smbd.service, nmbd.service, samba-ad-dc.service]
+  register: samba_active
+  changed_when: false
+  failed_when: samba_active.rc not in [0, 3, 4]
+  check_mode: false
+
+- name: Refuse to replace unmanaged Samba configuration
+  ansible.builtin.assert:
+    that:
+      - not samba_existing_config.stat.exists or (samba_existing_config.stat.isreg | default(false) and not samba_existing_config.stat.islnk | default(false))
+      - samba_config_managed | bool or samba_active.rc != 0
+      - >-
+        not samba_existing_config.stat.exists or samba_config_managed | bool or
+        (samba_stock_config.stat.isreg | default(false) and
+         not samba_stock_config.stat.islnk | default(false) and
+         samba_existing_config.stat.checksum | default('existing-missing') == samba_stock_config.stat.checksum | default('stock-missing') and
+         samba_active.rc != 0)
+    fail_msg: Only role-managed configuration or an inactive installation's byte-identical Debian stock file can be replaced. Back up and review any unmanaged or active installation before explicit adoption.
+
+- name: Install Samba without starting an unconfigured listener
+  ansible.builtin.apt:
+    name: samba
+    state: present
+    install_recommends: false
+    policy_rc_d: 101
+
+- name: Look up the dedicated sharing account
+  ansible.builtin.getent:
+    database: passwd
+    key: '{{ samba_user }}'
+    fail_key: false
+  register: samba_existing_user
+
+- name: Look up the dedicated sharing group
+  ansible.builtin.getent:
+    database: group
+    key: '{{ samba_group }}'
+    fail_key: false
+  register: samba_existing_group
+
+- name: Refuse takeover of an interactive privileged or shared account
+  ansible.builtin.assert:
+    that:
+      - not account or account[1] | int > 0
+      - not group or group[1] | int > 0
+      - not account or account[5] in ['/usr/sbin/nologin', '/sbin/nologin', '/bin/false']
+      - not account or account[4] == '/nonexistent'
+      - not account or (group and account[2] | int == group[1] | int)
+      - not group or group[2] in ['', samba_user]
+    fail_msg: Use a dedicated non-login sharing account/group; existing interactive or shared accounts will not be repurposed.
+  vars:
+    account: '{{ samba_existing_user.ansible_facts.getent_passwd[samba_user] }}'
+    group: '{{ samba_existing_group.ansible_facts.getent_group[samba_group] }}'
+
+- name: Inspect existing sharing account supplementary groups
+  ansible.builtin.command:
+    argv: [/usr/bin/id, -G, '{{ samba_user }}']
+  register: samba_memberships
+  changed_when: false
+  check_mode: false
+  when: samba_existing_user.ansible_facts.getent_passwd[samba_user] is not none
+
+- name: Refuse supplementary privileges on the sharing account
+  ansible.builtin.assert:
+    that: samba_memberships.stdout.split() | difference([samba_existing_user.ansible_facts.getent_passwd[samba_user][2]]) | length == 0
+  when: samba_existing_user.ansible_facts.getent_passwd[samba_user] is not none
+
+- name: Create the file-sharing group
+  ansible.builtin.group:
+    name: '{{ samba_group }}'
+    system: true
+
+- name: Create the dedicated non-login file-sharing account
+  ansible.builtin.user:
+    name: '{{ samba_user }}'
+    group: '{{ samba_group }}'
+    system: true
+    create_home: false
+    home: /nonexistent
+    shell: /usr/sbin/nologin
+    password_lock: true
+
+- name: Inspect the share path
+  ansible.builtin.stat:
+    path: '{{ samba_share_path }}'
+    follow: false
+  register: samba_path
+
+- name: Refuse a symlink share
+  ansible.builtin.assert:
+    that: not samba_path.stat.exists or (samba_path.stat.isdir | default(false) and not samba_path.stat.islnk | default(false))
+
+- name: Set share directory permissions without changing existing files
+  ansible.builtin.file:
+    path: '{{ samba_share_path }}'
+    state: directory
+    owner: '{{ samba_user }}'
+    group: '{{ samba_group }}'
+    mode: '2770'
+
+- name: Inspect Samba accounts
+  ansible.builtin.command:
+    argv: [/usr/bin/pdbedit, --list]
+  register: samba_accounts
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Set Samba password only for creation or explicit rotation
+  ansible.builtin.command:
+    argv: [/usr/bin/smbpasswd, -s, -a, '{{ samba_user }}']
+    stdin: "{{ samba_password }}\n{{ samba_password }}\n"
+  no_log: true
+  changed_when: true
+  when: not ansible_check_mode and (samba_update_password | bool or samba_accounts.stdout_lines | select('match', '^' ~ samba_user ~ ':') | list | length == 0)
+
+- name: Render the private SMB configuration
+  ansible.builtin.template:
+    src: smb.conf.j2
+    dest: /etc/samba/smb.conf
+    owner: root
+    group: root
+    mode: '0644'
+    validate: /usr/bin/testparm --suppress-prompt %s
+  notify: Restart private Samba
+
+- name: Create the Samba mount dependency directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/smbd.service.d
+    state: directory
+    mode: '0755'
+
+- name: Require the correct RAID mount for Samba startup and lifetime
+  ansible.builtin.template:
+    src: storage.conf.j2
+    dest: /etc/systemd/system/smbd.service.d/storage.conf
+    mode: '0644'
+  notify: Restart private Samba
+
+- name: Disable legacy NetBIOS listeners
+  ansible.builtin.systemd_service:
+    name: nmbd.service
+    enabled: false
+    state: stopped
+  when: not ansible_check_mode
+
+- name: Apply private Samba configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable private Samba
+  ansible.builtin.systemd_service:
+    name: smbd.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode

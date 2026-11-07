@@ -10,5 +10,9 @@
     - common
     - docker
     - compose
+    - role: samba
+      tags: [samba]
+    - role: immich
+      tags: [immich]
     - role: valheim
       tags: [valheim]

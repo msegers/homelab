@@ -23,6 +23,8 @@ pub struct Config {
     pub worlds_dir: PathBuf,
     pub config_dir: PathBuf,
     pub backups_dir: PathBuf,
+    #[serde(default)]
+    pub required_mount_uuids: HashMap<PathBuf, String>,
     #[serde(default = "backups_enabled")]
     pub pre_change_backups: bool,
     pub state_dir: PathBuf,
@@ -38,6 +40,30 @@ fn backups_enabled() -> bool {
 }
 
 impl Config {
+    /// Fail closed before starting a container or creating a backup. Missing
+    /// mounts must never turn a RAID backup path into an SSD directory.
+    pub fn verify_storage(&self) -> Result<()> {
+        for (path, uuid) in &self.required_mount_uuids {
+            let output = std::process::Command::new("/usr/bin/findmnt")
+                .args(["--noheadings", "--mountpoint"])
+                .arg(path)
+                .args(["--output", "UUID,FSTYPE,OPTIONS"])
+                .output()
+                .context("Cannot verify required storage mount")?;
+            let text = String::from_utf8(output.stdout)?;
+            let fields: Vec<_> = text.split_whitespace().collect();
+            ensure!(
+                output.status.success()
+                    && fields.len() == 3
+                    && fields[0] == uuid
+                    && fields[1] == "ext4"
+                    && fields[2].split(',').any(|option| option == "rw"),
+                "Required storage filesystem is missing, read-only, or has the wrong UUID"
+            );
+        }
+        Ok(())
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let config: Self =
             serde_json::from_slice(&fs::read(path).context("Cannot read control settings")?)
@@ -125,6 +151,7 @@ impl<E: Engine> Controller<E> {
     }
 
     pub fn start(&self, recreate: bool) -> Result<()> {
+        self.config.verify_storage()?;
         self.engine.inspect()?; // Refuse another project's container before Compose.
         let world = self.world()?;
         save_json(
@@ -240,6 +267,7 @@ impl<E: Engine> Controller<E> {
     }
 
     pub fn backup(&self) -> Result<String> {
+        self.config.verify_storage()?;
         self.while_stopped("Backup", || self.archive())
     }
 

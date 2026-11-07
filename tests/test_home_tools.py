@@ -68,7 +68,7 @@ class HomeToolsDnsTests(unittest.TestCase):
         host = yaml.safe_load((ROOT / "ansible/host_vars/homelab/main.yml").read_text())
         self.assertTrue(host["compose_private_tls_enabled"])
         self.assertEqual(host["compose_cloudflare_api_token"], "{{ vault_cloudflare_api_token }}")
-        self.assertEqual(host["compose_pihole_local_hosts"], ["{{ compose_bind_ip }} lab.mathijs.se", "{{ compose_bind_ip }} pihole.mathijs.se"])
+        self.assertEqual(host["compose_pihole_local_hosts"], ["{{ compose_bind_ip }} lab.mathijs.se", "{{ compose_bind_ip }} pihole.mathijs.se", "{{ compose_bind_ip }} photos.mathijs.se", "{{ compose_bind_ip }} shared.mathijs.se"])
         self.assertEqual(host["compose_pihole_domain"], "pihole.mathijs.se")
         self.assertEqual(host["compose_pihole_allowed_networks"], ["192.168.68.0/24"])
         self.assertEqual(host["valheim_dashboard_allowed_hosts"], ["lab.mathijs.se"])
@@ -142,14 +142,15 @@ class HomeToolsDnsTests(unittest.TestCase):
         command = shlex.split(os.environ.get("CADDY_COMMAND", "caddy"))
         if not shutil.which(command[0]):
             self.skipTest("Install Caddy or set CADDY_COMMAND for proxy integration checks")
-        _, source = self.render(None, with_caddy=True, compose_home_tools_enabled=True, compose_private_tls_enabled=tls)
+        _, source = self.render(None, with_caddy=True, compose_home_tools_enabled=True, compose_immich_enabled=True, compose_private_tls_enabled=tls)
         _, disabled_source = self.render(None, with_caddy=True, compose_private_tls_enabled=tls)
         scheme = "https" if tls else "http"
         environment = dict(os.environ, WEBSITE_DOMAIN="website.example.test",
                            WEBSITE_WWW_DOMAIN="www.website.example.test",
                            PIHOLE_DOMAIN="pihole.mathijs.se", PIHOLE_ALLOWED_NETWORKS="192.168.68.0/24",
                            HOME_TOOLS_DOMAIN="lab.mathijs.se", HOME_TOOLS_ALLOWED_NETWORKS="192.168.68.0/24",
-                            HOME_TOOLS_UPSTREAM="192.168.68.111:8787", CF_API_TOKEN="a" * 40)
+                             HOME_TOOLS_UPSTREAM="192.168.68.111:8787", CF_API_TOKEN="a" * 40,
+                             IMMICH_DOMAIN="photos.mathijs.se", IMMICH_ALLOWED_NETWORKS="192.168.68.0/24")
         with tempfile.TemporaryDirectory(prefix="proxy-validate-", dir="/tmp/opencode" if Path("/tmp/opencode").is_dir() else None) as temporary:
             config = Path(temporary) / "Caddyfile"
             config.write_text(source)
@@ -160,7 +161,7 @@ class HomeToolsDnsTests(unittest.TestCase):
         self.assertNotIn("private_ranges", adapted.stdout)
         if tls:
             policies = json.loads(adapted.stdout)["apps"]["tls"]["automation"]["policies"]
-            for domain_key in ["WEBSITE_DOMAIN", "WEBSITE_WWW_DOMAIN", "PIHOLE_DOMAIN", "HOME_TOOLS_DOMAIN"]:
+            for domain_key in ["WEBSITE_DOMAIN", "WEBSITE_WWW_DOMAIN", "PIHOLE_DOMAIN", "HOME_TOOLS_DOMAIN", "IMMICH_DOMAIN"]:
                 policy = next(policy for policy in policies if environment[domain_key] in policy.get("subjects", []))
                 for issuer in policy["issuers"]:
                     self.assertEqual(issuer["module"], "acme")
@@ -193,12 +194,13 @@ class HomeToolsDnsTests(unittest.TestCase):
         thread.start()
         self.addCleanup(thread.join, 5)
         self.addCleanup(upstream.shutdown)
-        for prefix, route_source in [("PIHOLE", disabled_source), ("HOME_TOOLS", source)]:
+        for prefix, route_source in [("PIHOLE", disabled_source), ("HOME_TOOLS", source), ("IMMICH", source)]:
             domain_key = f"{prefix}_DOMAIN"
             host = environment[domain_key]
             marker = scheme + "://{$" + domain_key + "}"
-            route = marker + route_source.split(marker, 1)[1]
+            route = marker + route_source.split(marker, 1)[1].split("\n}", 1)[0] + "\n}"
             route = route.replace("reverse_proxy pihole:80", "reverse_proxy {$HOME_TOOLS_UPSTREAM}")
+            route = route.replace("reverse_proxy homelab-immich:2283", "reverse_proxy {$HOME_TOOLS_UPSTREAM}")
             route = route.replace("{\n", "{\n\tbind 127.0.0.1\n", 1)
             for network, expected in [("192.168.68.0/24", 403), ("127.0.0.1/32", 200)]:
                 with self.subTest(route=prefix, network=network), tempfile.TemporaryDirectory(prefix="private-proxy-", dir="/tmp/opencode" if Path("/tmp/opencode").is_dir() else None) as temporary:

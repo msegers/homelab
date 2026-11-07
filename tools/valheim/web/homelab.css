@@ -1,0 +1,55 @@
+main { max-width: 1180px; }
+.refresh-controls { margin-bottom: 12px; }
+#message { margin-bottom: 20px; }
+#message[data-error="true"] { color: #d99585; }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+th, td { text-align: left; padding: 14px 12px; border-bottom: 1px solid #3b4940; }
+th { color: #adbbb2; font-weight: 500; white-space: nowrap; }
+td { overflow-wrap: anywhere; min-width: 100px; }
+td:first-child { font-weight: 650; }
+td:nth-child(2) { min-width: 180px; }
+meter {
+  display: block;
+  width: 100%;
+  min-width: 100px;
+  height: 12px;
+  margin-top: 10px;
+  accent-color: #dfc58b;
+}
+meter::-webkit-meter-bar { background: #141c19; border: 1px solid #627668; border-radius: 6px; }
+meter::-webkit-meter-optimum-value { background: #dfc58b; border-radius: 6px; }
+meter::-moz-meter-bar { background: #dfc58b; border-radius: 6px; }
+.disk-list { display: grid; gap: 28px; margin-top: 24px; }
+.disk-row { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 6px 24px; }
+.disk-row .heading { grid-column: 1; grid-row: 1; }
+.disk-row h3 { margin: 0; font-size: 1rem; }
+.disk-total, .disk-mount { color: #adbbb2; font-size: .8rem; }
+.disk-total { white-space: nowrap; }
+.disk-mount { grid-column: 1; grid-row: 2; margin: 0; overflow-wrap: anywhere; }
+.disk-bar { grid-column: 2; grid-row: 1; display: flex; height: 20px; overflow: hidden; border-radius: 6px; background: #141c19; }
+.disk-bar span { flex: none; }
+.disk-bar .disk-used { background: #dfc58b; }
+.disk-bar .disk-available { background: #6d9f81; }
+.disk-bar .disk-reserved { background: #627668; }
+.disk-legend { grid-column: 2; grid-row: 2; display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: .8rem; }
+.disk-legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 2px; }
+.disk-legend .disk-used::before { background: #dfc58b; }
+.disk-legend .disk-available::before { background: #6d9f81; }
+.disk-legend .disk-reserved::before { background: #627668; }
+.disk-legend .disk-total::before { display: none; }
+.disk-error { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: #d99585; margin: 0; }
+@media (max-width: 600px) {
+  .disk-row { grid-template-columns: minmax(0, 1fr); }
+  .disk-row .heading, .disk-mount, .disk-bar, .disk-legend, .disk-error { grid-column: 1; grid-row: auto; }
+  .disk-bar, .disk-error { margin-top: 6px; }
+}
+.host-layout { display: grid; gap: 28px; margin-top: 28px; }
+.host-layout dl { margin: 0; }
+.host-specs { grid-template-columns: 1fr; gap: 16px; }
+.host-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; }
+@media (min-width: 800px) {
+  .host-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 40px; }
+  .host-stats { padding-left: 40px; border-left: 1px solid #3b4940; }
+}
+@media (max-width: 420px) { .host-stats { grid-template-columns: 1fr; } }
