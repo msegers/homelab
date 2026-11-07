@@ -150,6 +150,9 @@
   check_mode: false
 
 - name: Create private Immich project and state directories
+  # Pinned server/ML images run as root; 0700 is intentional, not a UID mismatch.
+  # PostgreSQL/Valkey initialize as root and drop to uid/gid 999 inside the image.
+  # Keep their directories out of this repeat-run ownership enforcement below.
   ansible.builtin.file:
     path: '{{ item }}'
     state: directory
@@ -250,6 +253,7 @@
   register: immich_health
   changed_when: false
   until: immich_health.stdout_lines | sort == ['database running healthy', 'immich-machine-learning running healthy', 'immich-server running healthy', 'redis running healthy']
-  retries: 60
+  # PostgreSQL's inherited healthcheck allows five minutes of initialization.
+  retries: 120
   delay: 5
   when: not ansible_check_mode

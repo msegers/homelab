@@ -32,24 +32,32 @@
     name: nas_storage
     tasks_from: verify_mount
 
-- name: Detect an existing Samba configuration
+- name: Inspect Debian's package-supplied Samba configuration template
   ansible.builtin.stat:
-    path: /etc/samba/smb.conf
+    path: /usr/share/samba/smb.conf
     follow: false
-  register: samba_existing_config
+  register: samba_stock_config
 
-- name: Read an existing Samba configuration
-  ansible.builtin.slurp:
-    src: /etc/samba/smb.conf
-  register: samba_existing_content
-  when: samba_existing_config.stat.exists and samba_existing_config.stat.isreg | default(false)
+- name: Check whether an existing Samba service is active
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, is-active, smbd.service, nmbd.service, samba-ad-dc.service]
+  register: samba_active
+  changed_when: false
+  failed_when: samba_active.rc not in [0, 3, 4]
+  check_mode: false
 
 - name: Refuse to replace unmanaged Samba configuration
   ansible.builtin.assert:
     that:
       - not samba_existing_config.stat.exists or (samba_existing_config.stat.isreg | default(false) and not samba_existing_config.stat.islnk | default(false))
-      - not samba_existing_config.stat.exists or '# Managed by Ansible homelab samba' in (samba_existing_content.content | default('') | b64decode)
-    fail_msg: Existing Samba configuration is not owned by this role. Review and explicitly adopt it before deployment; it will not be overwritten.
+      - samba_config_managed | bool or samba_active.rc != 0
+      - >-
+        not samba_existing_config.stat.exists or samba_config_managed | bool or
+        (samba_stock_config.stat.isreg | default(false) and
+         not samba_stock_config.stat.islnk | default(false) and
+         samba_existing_config.stat.checksum | default('existing-missing') == samba_stock_config.stat.checksum | default('stock-missing') and
+         samba_active.rc != 0)
+    fail_msg: Only role-managed configuration or an inactive installation's byte-identical Debian stock file can be replaced. Back up and review any unmanaged or active installation before explicit adoption.
 
 - name: Install Samba without starting an unconfigured listener
   ansible.builtin.apt:

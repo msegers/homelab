@@ -214,7 +214,31 @@ class ProvisionTests(unittest.TestCase):
         mounts = {v["target"]: v["source"] for v in game["volumes"]}
         self.assertEqual(mounts["/config/worlds_local"], str(self.root / "storage/saves"))
         self.assertEqual(mounts["/config/backups"], str(self.root / "storage/backups"))
+        backup_mount = next(v for v in game["volumes"] if v["target"] == "/config/backups")
+        self.assertFalse(backup_mount["bind"]["create_host_path"])
+        backup = Path(mounts["/config/backups"])
+        self.assertEqual(backup.stat().st_uid, self.variables["valheim_game_account"]["uid"])
+        self.assertEqual(backup.stat().st_gid, self.variables["valheim_game_account"]["group"])
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(game["environment"]["BACKUPS_DIRECTORY_PERMISSIONS"], "700")
+        self.assertEqual(game["environment"]["BACKUPS_FILE_PERMISSIONS"], "600")
         self.assertFalse(any("docker.sock" in value for value in mounts.values()))
+
+    def test_backup_path_change_preserves_worlds_and_old_archives(self):
+        self.run_role()
+        saves = Path(self.config()["worlds_dir"])
+        old_backups = Path(self.config()["backups_dir"])
+        (saves / "Home.db").write_bytes(b"keep world")
+        (old_backups / "manual-existing.tar.gz").write_bytes(b"keep archive")
+        new_backups = self.root / "raid/backups/valheim"
+        self.variables["valheim_backups_dir"] = str(new_backups)
+        self.run_role()
+        self.assertEqual(self.config()["backups_dir"], str(new_backups))
+        self.assertEqual((saves / "Home.db").read_bytes(), b"keep world")
+        self.assertEqual((old_backups / "manual-existing.tar.gz").read_bytes(), b"keep archive")
+        self.assertEqual(new_backups.stat().st_uid, self.variables["valheim_game_account"]["uid"])
+        self.assertEqual(new_backups.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(list(new_backups.iterdir()), [])
 
     def test_game_mount_cannot_expose_administrative_files(self):
         for directory in [str(self.project), str(self.root / "home"), "/var/run", "/run"]:
@@ -244,6 +268,12 @@ class ProvisionTests(unittest.TestCase):
         self.variables["valheim_required_mounts"] = [str(self.root)]
         self.run_role(expect_success=False)
         self.assertFalse(self.project.exists())
+
+    def test_wrong_backup_mount_uuid_blocks_provisioning_before_directory_creation(self):
+        self.variables["valheim_required_mount_uuids"] = {"/": "00000000-0000-0000-0000-000000000000"}
+        self.run_role(expect_success=False)
+        self.assertFalse(self.project.exists())
+        self.assertFalse((self.root / "home/backups").exists())
 
     def test_backup_destination_cannot_contain_configuration(self):
         for suffix in ["", "/config"]:

@@ -74,6 +74,21 @@ class StorageServiceTests(unittest.TestCase):
             self.assertEqual(named(role, "configure", name)["ansible.builtin.import_role"],
                              {"name": "nas_storage", "tasks_from": "verify_mount"})
 
+    def test_real_mount_probe_and_uuid_guard_prevent_directory_creation(self):
+        if not shutil.which("findmnt"):
+            self.skipTest("findmnt unavailable")
+        source = yaml.safe_load((ROLES / "nas_storage/tasks/verify_mount.yml").read_text())
+        for missing in [True, False]:
+            with self.subTest(missing=missing), self.temporary() as temporary:
+                directory = Path(temporary)
+                tasks = yaml.safe_load(yaml.safe_dump(source))
+                # Inspect only: no mount/umount command. '/' is an actual mount
+                # but never our test RAID UUID; the temporary path isn't mounted.
+                tasks[1]["ansible.builtin.command"]["argv"][3] = str(directory) if missing else "/"
+                tasks.append({"ansible.builtin.file": {"path": str(directory / "unsafe-fallback"), "state": "directory"}})
+                self.run_play(directory, tasks, {"nas_storage_expected_uuid": UUID}, success=False)
+                self.assertFalse((directory / "unsafe-fallback").exists())
+
     def test_samba_exports_only_shared_and_requires_authentication(self):
         rendered = self.render("samba", ["smb.conf", "storage.conf"])
         source = rendered["smb.conf"]
@@ -98,7 +113,89 @@ class StorageServiceTests(unittest.TestCase):
             with self.temporary() as temporary:
                 self.run_play(Path(temporary), [guard], {
                     "samba_existing_config": {"stat": {"exists": True, "isreg": True, "islnk": False}},
-                    "samba_existing_content": {"content": base64.b64encode(contents.encode()).decode()}}, success)
+                    "samba_config_managed": contents.startswith("# Managed by Ansible homelab samba\n"),
+                    "samba_stock_config": {"stat": {"exists": False}},
+                    "samba_active": {"rc": 3}}, success)
+
+    def samba_inspection(self, directory):
+        tasks = yaml.safe_load((ROLES / "samba/tasks/inspect.yml").read_text())
+        tasks[0]["ansible.builtin.stat"]["path"] = str(directory / "smb.conf")
+        tasks[1]["ansible.builtin.slurp"]["src"] = str(directory / "smb.conf")
+        return tasks
+
+    def test_samba_first_install_partial_recovery_and_repeat_apply(self):
+        guard = named("samba", "configure", "Refuse to replace unmanaged Samba configuration")
+        stock = named("samba", "configure", "Inspect Debian's package-supplied Samba configuration template")
+        render = named("samba", "configure", "Render the private SMB configuration")
+        render.pop("notify")
+        render["ansible.builtin.template"].update(
+            src=str(ROLES / "samba/templates/smb.conf.j2"), owner=str(os.getuid()), group=str(os.getgid()))
+        # testparm is independently exercised when available; this fixture also
+        # runs on controllers without Samba installed and never installs packages.
+        render["ansible.builtin.template"].pop("validate")
+        variables = yaml.safe_load((ROLES / "samba/defaults/main.yml").read_text())
+        variables["samba_active"] = {"rc": 3}
+        with self.temporary() as temporary:
+            directory = Path(temporary)
+            stock_path = directory / "package-stock.conf"
+            stock_path.write_text("# Debian package template fixture\n[global]\nworkgroup = WORKGROUP\n")
+            stock["ansible.builtin.stat"]["path"] = str(stock_path)
+            render["ansible.builtin.template"]["dest"] = str(directory / "smb.conf")
+            preflight = self.samba_inspection(directory) + [stock, guard]
+            # Fresh host has no smb.conf; package installation would create it.
+            self.run_play(directory, preflight, variables)
+            # Simulate an interruption after apt installed only its stock file.
+            (directory / "smb.conf").write_bytes(stock_path.read_bytes())
+            self.run_play(directory, preflight + [render], variables)
+            self.assertTrue((directory / "smb.conf").read_text().startswith("# Managed by Ansible homelab samba\n"))
+            # The managed service is now active; repeat apply must be unchanged.
+            variables["samba_active"] = {"rc": 0}
+            result = self.run_play(directory, preflight + [render], variables)
+            self.assertIn("changed=0", result.stdout)
+
+    def test_samba_stock_adoption_requires_exact_bytes_and_inactive_service(self):
+        guard = named("samba", "configure", "Refuse to replace unmanaged Samba configuration")
+        for checksum, active, regular, success in [("stock", 3, True, True), ("stock", 0, True, False),
+            ("custom", 3, True, False), ("stock", 3, False, False)]:
+            with self.subTest(checksum=checksum, active=active, regular=regular), self.temporary() as temporary:
+                self.run_play(Path(temporary), [guard], {
+                    "samba_existing_config": {"stat": {"exists": True, "isreg": regular, "islnk": not regular, "checksum": checksum}},
+                    "samba_stock_config": {"stat": {"isreg": True, "islnk": False, "checksum": "stock"}},
+                    "samba_config_managed": False, "samba_active": {"rc": active}}, success)
+
+    def test_samba_disable_only_stops_managed_service_without_password_or_mount(self):
+        self.assertEqual(len(yaml.safe_load((ROLES / "samba/tasks/disable.yml").read_text())), 1)
+        disable = named("samba", "disable", "Stop and disable only the managed private Samba service")
+        self.assertEqual(disable["ansible.builtin.systemd_service"],
+                         {"name": "smbd.service", "state": "stopped", "enabled": False})
+        # Mock only the mutating module, not the ownership inspection or guards.
+        options = disable.pop("ansible.builtin.systemd_service")
+        disable["ansible.builtin.debug"] = {"msg": options}
+        main = yaml.safe_load((ROLES / "samba/tasks/main.yml").read_text())
+        self.assertEqual(main[1]["when"], "not samba_enabled | bool")
+        disable["when"] = [disable["when"], main[1]["when"]]
+        for content, enabled, stopped in [(None, False, False), ("[custom]\n", False, False),
+            ("# Managed by Ansible homelab samba\n", False, True),
+            ("# Managed by Ansible homelab samba\n", True, False),
+            ("# unrelated comment: # Managed by Ansible homelab samba\n", False, False)]:
+            with self.subTest(content=content, enabled=enabled), self.temporary() as temporary:
+                directory = Path(temporary)
+                if content is not None:
+                    (directory / "smb.conf").write_text(content)
+                tasks = self.samba_inspection(directory) + [disable]
+                for _ in range(2):
+                    result = self.run_play(directory, tasks, {"samba_enabled": enabled})
+                    self.assertEqual('"name": "smbd.service"' in result.stdout, stopped)
+                if content is not None:
+                    self.assertEqual((directory / "smb.conf").read_text(), content)
+        with self.temporary() as temporary:
+            directory = Path(temporary)
+            target = directory / "unmanaged-symlink-target.conf"
+            target.write_text("# Managed by Ansible homelab samba\n")
+            (directory / "smb.conf").symlink_to(target)
+            result = self.run_play(directory, self.samba_inspection(directory) + [disable], {"samba_enabled": False})
+            self.assertNotIn('"name": "smbd.service"', result.stdout)
+            self.assertTrue((directory / "smb.conf").is_symlink())
 
     def test_samba_does_not_take_over_interactive_or_shared_accounts(self):
         guard = named("samba", "configure", "Refuse takeover of an interactive privileged or shared account")
@@ -136,6 +233,39 @@ class StorageServiceTests(unittest.TestCase):
         create = named("immich", "configure", "Create only missing container-owned directories")
         self.assertEqual(create["when"], "not item.stat.exists")
 
+    def test_immich_directory_initialization_and_repeat_preserve_container_metadata(self):
+        root_dirs = named("immich", "configure", "Create private Immich project and state directories")
+        inspect = named("immich", "configure", "Inspect container-owned SSD directories")
+        create = named("immich", "configure", "Create only missing container-owned directories")
+        for task in [root_dirs, create]:
+            task["ansible.builtin.file"].update(owner=str(os.getuid()), group=str(os.getgid()))
+            self.assertNotIn("recurse", task["ansible.builtin.file"])
+        with self.temporary() as temporary:
+            directory = Path(temporary)
+            variables = {"immich_project_dir": str(directory / "project"), "immich_state_dir": str(directory / "state"),
+                         "immich_media_dir": str(directory / "media"), "immich_backup_dir": str(directory / "backup")}
+            tasks = [root_dirs, inspect, create]
+            self.run_play(directory, tasks, variables)
+            before = {}
+            for name in ["postgres", "redis"]:
+                data = directory / "state" / name
+                self.assertEqual(data.stat().st_mode & 0o777, 0o700)
+                # Stand in for image-managed metadata without privileged chown.
+                data.chmod(0o750)
+                marker = data / "existing-data"
+                marker.write_text("do not modify")
+                marker.chmod(0o600)
+                before[name] = (data.stat(), marker.stat())
+            result = self.run_play(directory, tasks, variables)
+            self.assertIn("changed=0", result.stdout)
+            for name, (data_before, marker_before) in before.items():
+                data = directory / "state" / name
+                marker = data / "existing-data"
+                for old, current in [(data_before, data.stat()), (marker_before, marker.stat())]:
+                    self.assertEqual((old.st_uid, old.st_gid, old.st_mode, old.st_ino),
+                                     (current.st_uid, current.st_gid, current.st_mode, current.st_ino))
+                self.assertEqual(marker.read_text(), "do not modify")
+
     def test_immich_release_storage_isolation_and_memory(self):
         rendered = self.render("immich", ["compose.yaml", "env", "immich.service"])
         compose = yaml.safe_load(rendered["compose.yaml"])
@@ -156,6 +286,8 @@ class StorageServiceTests(unittest.TestCase):
         self.assertNotIn("networks", services["database"])
         self.assertNotIn("networks", services["redis"])
         self.assertIn("homelab-immich", services["immich-server"]["networks"]["proxy"]["aliases"])
+        self.assertEqual(services["immich-server"]["depends_on"], {
+            "redis": {"condition": "service_healthy"}, "database": {"condition": "service_healthy"}})
 
     def test_immich_rejects_foreign_nested_mounts_and_network_database(self):
         guard = named("immich", "configure", "Refuse nested foreign mounts or a database on unsupported storage")
@@ -203,10 +335,28 @@ class StorageServiceTests(unittest.TestCase):
             self.assertIn("--source UUID=" + UUID, unit)
             self.assertIn("--types ext4 --options rw", unit)
         self.assertNotIn("--volumes", units[1])
-        self.assertIn("--abort-on-container-failure", units[1])
+        self.assertIn("--abort-on-container-exit", units[1])
+        self.assertIn("Restart=always", units[1])
+        self.assertIn("StartLimitIntervalSec=300", units[1])
+        self.assertIn("StartLimitBurst=3", units[1])
+        self.assertIn("RestartSec=15", units[1])
+        self.assertIn("ExecCondition=/usr/bin/findmnt", units[1])
+        self.assertNotIn("ExecStartPre=", units[1])
+        self.assertIn("PartOf=docker.service", units[1])
+        self.assertIn("up --timeout 120", units[1])
         wifi = self.render("samba", ["storage.conf"], samba_network_ready_unit="ifup@wlp0s20f3.service")["storage.conf"]
         self.assertIn("Requires=ifup@wlp0s20f3.service", wifi)
         self.assertIn("After=ifup@wlp0s20f3.service", wifi)
+
+    def test_immich_start_condition_rejects_unmounted_path_without_launching_compose(self):
+        source = self.render("immich", ["immich.service"])["immich.service"]
+        condition = next(line.removeprefix("ExecCondition=") for line in source.splitlines()
+                         if line.startswith("ExecCondition="))
+        with self.temporary() as temporary:
+            argv = shlex.split(condition.replace("/srv/storage", temporary))
+            result = subprocess.run(argv, capture_output=True, text=True)
+            # systemd documents 1..254 as a skipped start, not a restart failure.
+            self.assertEqual(result.returncode, 1, result.stderr)
 
     def test_independent_disable_preserves_all_data(self):
         tasks = yaml.safe_load((ROLES / "immich/tasks/main.yml").read_text())

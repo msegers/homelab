@@ -20,7 +20,11 @@ services:
           create_host_path: false
       - /etc/localtime:/etc/localtime:ro
     env_file: [.env]
-    depends_on: [redis, database]
+    depends_on:
+      redis:
+        condition: service_healthy
+      database:
+        condition: service_healthy
     restart: 'no'
     healthcheck:
       disable: false

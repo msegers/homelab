@@ -27,6 +27,26 @@ data or accidentally placing assets on SSD. Existing directory contents are not
 recursively chowned. PostgreSQL/Valkey own their initialized subdirectories;
 repeat provisioning must not reset that ownership.
 
+### Pinned image permissions (reviewed, not runtime-tested)
+
+Registry metadata and entrypoint code/layers were inspected for the pinned
+**amd64** images. No permissions were loosened and no Compose `user` override
+or extra privilege was added:
+
+| Image | Startup/runtime identity | Directory handling |
+| --- | --- | --- |
+| Immich server / ML v3.3.6 | UID/GID 0:0 | Root-owned media/model-cache 0700 is writable as configured. |
+| Pinned PostgreSQL 14 | Starts as root, then `gosu postgres` (999:999) | Entrypoint sets PGDATA mode 0700 and ownership; initializes only without PG_VERSION. |
+| Pinned Valkey 9 | Starts as root, then `setpriv` (999:999) | Entrypoint takes ownership of `/data`, then drops privileges and sets a private umask. |
+
+Ansible creates PostgreSQL/Valkey directories only if missing. Existing owner,
+group and mode are untouched; their group may remain root because upstream
+changes the owner, not necessarily the group. The upstream entrypoints themselves
+can walk/chown their own data; Ansible adds no recursive chown. These findings
+do not apply to arbitrary image upgrades or custom rootless/user overrides.
+Server/ML source: [v3.3.6](https://github.com/immich-app/immich/tree/587f549f46f1cd1822a06e16dcccecef04ea4565).
+PostgreSQL wrapper: [pinned base-images source](https://github.com/immich-app/base-images/blob/c5095615488fa07469b5df48a3c3e5cebeed7296/postgres/immich-docker-entrypoint.sh).
+
 Consumers verify the exact writable ext4 UUID before creating directories.
 Samba and Immich have `RequiresMountsFor`, `After`, and `BindsTo` dependencies on
 `srv-storage.mount`, plus a UUID/type/read-write startup check. Their startup
@@ -36,6 +56,37 @@ boot restoration from bypassing mount checks. Bind mounts forbid automatic
 host-path creation. Neither service gates Docker globally or changes unrelated
 services' boot dependencies. Recovery after a missing mount is deliberately
 manual: fix the storage, then explicitly start the affected service.
+
+### Immich lifecycle
+
+Systemd remains the sole lifecycle owner. Stop/restart through
+`systemctl stop|restart homelab-immich`, not ad-hoc container/Compose operations.
+
+- Compose waits for PostgreSQL and Valkey **health**, not merely process startup,
+  before starting the server. Deployment waits up to ten minutes for all services.
+- **Any container exit, including code 0**, stops the stack. Systemd retries after
+  15 seconds; three starts within five minutes hit the rate limit instead of a
+  hot restart loop. A running-but-unhealthy/hung container does not automatically
+  restart: inspect its health/logs; no watchdog is introduced.
+- Abort/shutdown gives containers 120 seconds to stop; the unit allows five
+  minutes for dependency-ordered cleanup. `systemctl stop` (including Ansible
+  disable or shutdown/mount dependency stops) suppresses automatic restart.
+- Enabled startup after reboot waits for Docker and RAID. An ordered
+  `systemctl restart docker` propagates via `PartOf` and starts Immich only after
+  Docker returns. A separate Docker stop/start, failed daemon recovery, or lost
+  mount may require an explicit Immich start; no dependency-repair agent exists.
+- The UUID/read-write `ExecCondition` skips startup on a wrong/unavailable mount
+  without retrying it. Dependency/mount failures never enable Docker container
+  boot restoration. Fix storage/daemon failures before starting the unit again.
+- Unchanged Ansible runs do not restart Immich; changed Compose/env/unit files
+  intentionally restart **only** Immich. Installing these lifecycle changes on
+  an already deployed instance therefore briefly interrupts Immich.
+
+After diagnosing/fixing a rate-limited failure, use `systemctl reset-failed
+homelab-immich` followed by `systemctl start homelab-immich`. Inspect
+`journalctl -u homelab-immich` and Compose health before accepting recovery.
+These are configuration guarantees and upstream semantics, **not a tested host
+reboot or Docker/container crash-recovery result**.
 
 Valheim's Rust controller verifies required mount UUIDs before start/archive,
 and the backup bind mount also forbids host-path creation. An already running
@@ -93,9 +144,13 @@ ansible-playbook immich.yml --ask-vault-pass --ask-become-pass
 
 Repeat each apply: unchanged configuration should report no changes. Existing
 unmanaged Samba or Immich configuration causes a failure, not an overwrite.
-Review and back up any such configuration before explicitly adopting it. A
-failed first Samba installation can leave the package's stock `smb.conf`; review
-it too rather than removing the guard. Password updates use
+Review and back up any such configuration before explicitly adopting it. An
+inactive Samba installation's `/etc/samba/smb.conf` may be adopted **only when
+byte-identical** to Debian's `/usr/share/samba/smb.conf`. This also permits a
+safe retry after apt installed stock configuration but later provisioning failed.
+Modified files, symlinks and an active unmanaged Samba installation still stop
+deployment; no fuzzy/default-looking-config matching or automatic takeover is
+used. Password updates use
 `samba_update_password: true` only for an explicitly authorized rotation;
 ordinary runs do not rewrite Samba's password database.
 
@@ -194,6 +249,19 @@ manual/pre-change archives use the new destination after controller deployment.
 Native Valheim save backups remain enabled. These RAID copies help recover from
 SSD loss or an accidental world change; they are not off-machine backups.
 
+The [pinned Valheim image's source](https://github.com/community-valheim-tools/valheim-server-docker/tree/d333bbeffab3f7cf4d9f23678acc32ef51ae28e2)
+maps its `valheim` account to the Ansible account's PUID/PGID during bootstrap;
+its backup worker runs as that account and can write the 0700 backup bind mount.
+Private host parent directories do not block access through the container bind.
+The Rust controller is a **different mechanism**: it runs with administrative
+permissions, checks the host RAID UUID and cleanly stops the game for manual/
+pre-change archives. Its `manual-*.tar.gz` files are not matched by the image's
+`worlds-*.zip` retention. Upstream bootstrap may chown those files to the game
+account on the next authorized container start; file contents remain intact.
+The image worker uses its already-bound filesystem, not the Rust UUID check. If
+the host mount disappears, that bind cannot silently switch to SSD; I/O can still
+fail. Neither image scheduling nor real-game restore has been tested here.
+
 Immich automatically dumps its database under `/srv/storage/immich/backups`
 (upstream default: daily at 02:00, keep 14). Verify a successful dump in
 Administration and test a restore on a separate disposable instance. Those dumps
@@ -250,6 +318,17 @@ covered with local fixtures; do not unmount live storage to test it. Arrange a
 separate owner-approved reboot window with console access and verify mount and
 service order **before** rerunning Ansible. Repeat apply for idempotence.
 
+On the EliteDesk, additionally verify initial startup and a second apply preserve
+PostgreSQL/Valkey data ownership; server uploads and an ML model download work;
+and an owner-approved Immich restart and Docker restart return all four services
+to healthy. Test container exit/nonzero and exit/zero recovery only with a
+disposable library or an explicitly approved maintenance plan. Prove an
+intentional stop stays stopped. For Valheim, verify both a controller archive
+and a scheduled image archive in the RAID directory after an authorized game
+start, then test restoration separately. Local fixtures do not execute images,
+simulate real disk failure, or validate that running old containers adopted new
+backup configuration.
+
 To stop/disable only Immich while preserving all data:
 
 ```bash
@@ -261,3 +340,20 @@ reenabling it. The unit's Compose `down` removes only its project containers and
 private network, never the external proxy network, data directories or volumes.
 No `down -v` or data-deletion task exists. Optional route/DNS cleanup can be
 reviewed separately; SMB and other services remain running.
+
+To stop/disable **only role-managed Samba** while retaining all shared files,
+accounts, passwords and configuration:
+
+```bash
+ansible-playbook samba.yml -e '{"samba_enabled": false}' --ask-vault-pass --ask-become-pass
+```
+
+Also persist `samba_enabled: false` in inventory to avoid later re-enabling it.
+Disable needs no Samba password or mounted RAID. Only a regular smb.conf whose
+first line is this role's ownership marker authorizes stopping/disabling smbd;
+an unmanaged installation (including unadopted stock config) is left untouched.
+This is disable, not masking/uninstalling: explicitly enabling the role again
+reuses the existing account/password and files. The targeted Samba/Immich
+playbooks do not restart Valheim, networking, Docker, Caddy, or unrelated services. Samba
+configuration changes can restart smbd, and explicitly disabling it disconnects
+SMB clients.
