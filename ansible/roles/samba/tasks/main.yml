@@ -1,0 +1,4 @@
+---
+- name: Configure the optional private file share
+  ansible.builtin.import_tasks: configure.yml
+  when: samba_enabled | bool

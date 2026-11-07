@@ -32,6 +32,8 @@ jobs:
         run: node --test tools/valheim/web/app.test.mjs
       - name: Install Ansible test dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends samba-common-bin
           python3 -m venv .venv
           .venv/bin/pip install ansible
           .venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
@@ -47,4 +49,6 @@ jobs:
           cd ansible
           ansible-playbook -i localhost, site.yml --syntax-check
           ansible-playbook -i localhost, valheim.yml --syntax-check
+          ansible-playbook -i localhost, samba.yml --syntax-check
+          ansible-playbook -i localhost, immich.yml --syntax-check
           ansible-playbook -i localhost, verify-vault-migration.yml --syntax-check

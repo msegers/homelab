@@ -165,13 +165,17 @@ class ProvisionTests(unittest.TestCase):
         for key in ["valheim_enabled", "valheim_idle_shutdown_enabled", "valheim_dashboard_enabled"]:
             self.assertIs(host[key], True)
         self.variables.update({key: value for key, value in host.items() if key.startswith("valheim_")})
+        # Host RAID policy is checked in test_storage_services. Provision this
+        # fixture only inside its temporary directory, never against real mounts.
+        self.variables.update(valheim_backups_dir=str(self.root / "home/backups"),
+                              valheim_required_mounts=[], valheim_required_mount_uuids={})
         self.run_role()
         self.assertIs(self.config()["idle_enabled"], True)
         self.assertEqual(self.config()["idle_timeout"], 3600)
         self.assertEqual(self.config()["query_address"], "192.168.68.111:2457")
         self.assertTrue(self.config()["pre_change_backups"])
         rendered = yaml.safe_load((self.project / "docker-compose.yml").read_text())
-        self.assertEqual(rendered["services"]["valheim"]["environment"]["BACKUPS"], "false")
+        self.assertEqual(rendered["services"]["valheim"]["environment"]["BACKUPS"], "true")
         # Native game backups keep their defaults: BACKUPS only controls the
         # image's scheduled worker, not Valheim's -backups/-backup* arguments.
         self.assertNotIn("-backup", rendered["services"]["valheim"]["environment"].get("SERVER_ARGS", ""))

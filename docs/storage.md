@@ -2,8 +2,10 @@
 
 This is a whole-disk **mdadm RAID 1**, ext4, mounted at `/srv/storage`. Usable
 capacity is approximately one 1 TB disk (931 GiB before filesystem overhead),
-not the combined capacity. RAID is not a backup. No Samba, LVM, ZFS, backup
-jobs, or changes to Docker/Pi-hole/Caddy/Valheim are included.
+not the combined capacity. RAID is not a backup. This page documents the original
+array setup. For the **existing initialized mirror**, use
+[private SMB, Immich and backup integration](storage-services.md); do not repeat
+the historical initialization commands below. No LVM or ZFS is introduced.
 
 `main` was updated before implementation. Read-only inspection confirmed:
 

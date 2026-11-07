@@ -1,0 +1,16 @@
+---
+- name: Inspect the independently managed Immich unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/homelab-immich.service
+  register: immich_unit
+
+- name: Disable Immich without deleting data or touching other projects
+  ansible.builtin.systemd_service:
+    name: homelab-immich.service
+    state: stopped
+    enabled: false
+  when: not immich_enabled | bool and immich_unit.stat.exists
+
+- name: Configure optional Immich
+  ansible.builtin.import_tasks: configure.yml
+  when: immich_enabled | bool

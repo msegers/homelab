@@ -24,4 +24,6 @@ ansible-playbook site.yml --ask-vault-pass
 [Homelab statistics, Home Tools and LAN DNS](docs/home-tools.md) ·
 [Rust source and development](tools/valheim/README.md).
 
+[RAID-backed private SMB, Immich, backups and deployment](docs/storage-services.md).
+
 Originally inspired by [Saura Sahu's homelab](https://github.com/mrsauravsahu/kube-homelab).

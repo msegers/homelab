@@ -4,3 +4,4 @@ nas_storage_enabled: false
 nas_storage_initialize: false
 nas_storage_disks: []
 nas_storage_protected_disk: ""
+nas_storage_expected_uuid: ""

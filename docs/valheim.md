@@ -146,8 +146,9 @@ preserve those backups outside the primary world directory before deleting it.
 There are three independent backup mechanisms:
 
 - **Docker image's scheduled worker:** `valheim_backups_enabled` controls only
-  the image's `BACKUPS` setting. This host keeps it **`false`** until NAS storage
-  is ready, avoiding scheduled image backups on the SSD.
+  the image's `BACKUPS` setting. This host now enables it with new archives under
+  `/srv/storage/backups/valheim` on the verified RAID. The worker runs only while
+  the game container is running; existing SSD archives are not moved.
 - **Controller safety archives:** `valheim_pre_change_backups` independently
   defaults to **`true`**, and is explicitly enabled on this host. It controls
   backups before world switches, not scheduled backups. Manual CLI backups remain
@@ -162,9 +163,10 @@ Deletion archives contain the complete saves, configuration, Compose file and
 selected-world metadata in `valheim_backups_dir`, with private permissions. The
 archive must be finished, synced and published successfully before removal. It
 includes the deleted world's data for recovery, not just the selected world.
-For now these safety archives use the existing local backup directory; move
-`valheim_backups_dir` to the NAS and configure `valheim_required_mounts` when it
-is ready. Changing the image's scheduled-backup setting takes effect on the next
+The host now points these safety archives at `/srv/storage/backups/valheim`, with
+required mount/UUID checks in provisioning and the Rust controller. See
+[storage-service safety and deployment](storage-services.md). Changing the image's
+scheduled-backup setting takes effect on the next
 game start/recreation, not by Ansible restarting the game.
 
 For port-free trusted HTTPS and DNS setup, see [Home Tools](home-tools.md).

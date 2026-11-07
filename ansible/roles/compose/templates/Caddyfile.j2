@@ -37,3 +37,19 @@
 	respond "LAN access only" 403
 }
 {% endif %}
+
+{% if compose_immich_enabled | bool %}
+{{ 'https' if compose_private_tls_enabled | bool else 'http' }}://{$IMMICH_DOMAIN} {
+{% if compose_private_tls_enabled | bool %}
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+		resolvers 1.1.1.1 1.0.0.1
+	}
+{% endif %}
+	@lan remote_ip {$IMMICH_ALLOWED_NETWORKS}
+	handle @lan {
+		reverse_proxy homelab-immich:2283
+	}
+	respond "LAN access only" 403
+}
+{% endif %}

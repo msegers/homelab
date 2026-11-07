@@ -249,5 +249,7 @@ They do not prove live game save compatibility, clean saves during real world
 switches, router isolation, or LAN DNS resolution. Test with disposable worlds
 first. Deletion always requires a successful recovery archive, independently of
 scheduled backups; still verify real-game restoration before relying on it for
-valuable saves. Scheduled image backups remain off until the NAS is ready, while
-pre-change archives and the game's native automatic backups remain enabled.
+valuable saves. The host now enables scheduled image backups to the verified
+RAID at `/srv/storage/backups/valheim`; existing SSD archives and live saves are
+not moved. Pre-change archives and the game's native automatic backups remain
+enabled. See [storage-service deployment and safety](storage-services.md).

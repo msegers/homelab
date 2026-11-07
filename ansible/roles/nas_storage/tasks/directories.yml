@@ -1,0 +1,30 @@
+---
+- name: Verify storage before creating bulk directories
+  ansible.builtin.import_tasks: verify_mount.yml
+
+- name: Inspect bulk directory paths without following symlinks
+  ansible.builtin.stat:
+    path: '/srv/storage/{{ item }}'
+    follow: false
+  loop: [shared, immich, valheim, backups]
+  register: storage_bulk_paths
+
+- name: Refuse files or symlinks in bulk directory paths
+  ansible.builtin.assert:
+    that: not item.stat.exists or (item.stat.isdir | default(false) and not item.stat.islnk | default(false))
+  loop: '{{ storage_bulk_paths.results }}'
+  loop_control:
+    label: '{{ item.item }}'
+
+# Consumer roles own permissions on existing directories. No recursive chown.
+- name: Create missing bulk storage directories
+  ansible.builtin.file:
+    path: '/srv/storage/{{ item.item }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  loop: '{{ storage_bulk_paths.results }}'
+  loop_control:
+    label: '{{ item.item }}'
+  when: not item.stat.exists
