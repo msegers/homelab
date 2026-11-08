@@ -135,8 +135,11 @@ fn missing_or_foreign_raid_blocks_start_and_backup_without_stopping_game_or_crea
             .required_mount_uuids
             .insert(mount, "00000000-0000-0000-0000-000000000000".into());
         assert!(controller.start(false).is_err());
+        assert!(controller.restart().is_err());
         assert!(controller.backup().is_err());
         assert!(controller.archive().is_err());
+        assert!(controller.select_world("OtherWorld").is_err());
+        assert_eq!(controller.world().unwrap(), "Home");
         assert!(controller.engine.info.borrow().as_ref().unwrap().running);
         assert_eq!(controller.engine.starts.get(), 0);
         assert_eq!(controller.engine.stops.get(), 0);

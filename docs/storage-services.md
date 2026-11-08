@@ -101,6 +101,14 @@ container holds its original filesystem bind mount rather than falling through
 to SSD. Forced/lazy unmounts and disk-failure simulation are not acceptance
 tests; do not perform them on the live game/library.
 
+The controller checks the exact RAID UUID/type separately from writability of
+the configured backup destination. `ProtectSystem=strict` intentionally makes
+`/srv/storage` read-only inside the broker; only its `ReadWritePaths` backup
+directory needs to be writable. Do not grant write access to the whole array to
+work around this sandbox view. Missing/wrong RAID mounts, a foreign filesystem
+under a RAID backup path, and read-only backup destinations still fail closed.
+World changes and restarts preflight storage before stopping a running game.
+
 ## Secrets and deployment (owner-run)
 
 Nothing has been deployed by these repository changes. From `ansible/`, edit
