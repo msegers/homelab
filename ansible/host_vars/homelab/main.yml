@@ -22,10 +22,11 @@ compose_immich_domain: photos.mathijs.se
 compose_immich_allowed_networks: [192.168.68.0/24]
 
 samba_enabled: true
+# Owner-requested unauthenticated read/write access, restricted to the LAN below.
+samba_guest_enabled: true
 samba_bind_ip: '{{ compose_bind_ip }}'
 samba_allowed_networks: [192.168.68.0/24]
 samba_network_ready_unit: 'ifup@{{ docker_ifupdown_wait_online_interface }}.service'
-samba_password: '{{ vault_samba_password }}'
 
 immich_enabled: true
 immich_db_password: '{{ vault_immich_db_password }}'

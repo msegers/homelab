@@ -59,7 +59,8 @@ Real-disk initialization, completed resync, and
 reboot acceptance remain owner-run steps in `docs/storage.md`.
 
 `test_storage_services.py` checks exact writable RAID UUID guards, authenticated
-single-share SMB configuration, unmanaged-config refusal, release-matched Immich
+default and owner-enabled guest-only single-share SMB configurations, guest-mode
+password-task skipping, unmanaged-config refusal, release-matched Immich
 Compose storage/network isolation, mount-dependent units and independent disable.
 Set `TESTPARM_COMMAND` if Samba's parser is available outside PATH. Compose/parser
 checks run when the corresponding binaries are available. Private Caddy route

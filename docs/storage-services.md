@@ -21,6 +21,13 @@ If its record is missing, stop for diagnosis; do not enable initialization.
 | `/var/lib/homelab-immich` | SSD: PostgreSQL, Valkey state and ML model cache. |
 | `/opt/immich` | SSD: protected Compose configuration and `.env`. |
 
+The owner has explicitly selected **guest-only, unauthenticated SMB** for this
+host (`samba_guest_enabled: true`). Every device on `192.168.68.0/24` can read,
+create, modify and delete files in `shared`. Do not store private data there or
+treat it as a protected backup. The `shared` Unix account is still locked and
+non-login: it supplies file ownership, not an SMB login. The remaining directories
+are not exported. Reusable defaults keep guest access **off**.
+
 Paths and credentials are role variables. The bulk media/export locations are
 deliberately constrained to the approved directories to avoid exposing private
 data or accidentally placing assets on SSD. Existing directory contents are not
@@ -103,9 +110,14 @@ the **existing** Vault; do not recreate it or replace existing secrets:
 ansible-vault edit host_vars/homelab/vault.yml
 ```
 
-Add `vault_samba_password` (12+ characters, no newlines) and
-`vault_immich_db_password` (24–128 random alphanumeric characters, per Immich's
-Compose recommendations). Keep passwords in your password manager. No plaintext
+Add `vault_immich_db_password` (24–128 random alphanumeric characters, per Immich's
+Compose recommendations). **No Samba password is required in guest mode**;
+Samba password-database inspection/creation/rotation is skipped. Existing Samba
+credentials, if any, are retained but are not required for guest access.
+To return to authenticated SMB, set `samba_guest_enabled: false`, add
+`vault_samba_password` (12+ characters, no newlines), and set
+`samba_password: '{{ vault_samba_password }}'` in host variables.
+Keep passwords in your password manager. No plaintext
 credentials belong in Git, command-line extra-vars, logs, or `--diff` output.
 Rendered `.env` and Compose files are root-only. Changing the Vault DB password
 does **not** rotate an initialized PostgreSQL account; the role refuses that
@@ -150,7 +162,7 @@ byte-identical** to Debian's `/usr/share/samba/smb.conf`. This also permits a
 safe retry after apt installed stock configuration but later provisioning failed.
 Modified files, symlinks and an active unmanaged Samba installation still stop
 deployment; no fuzzy/default-looking-config matching or automatic takeover is
-used. Password updates use
+used. In authenticated mode, password updates use
 `samba_update_password: true` only for an explicitly authorized rotation;
 ordinary runs do not rewrite Samba's password database.
 
@@ -173,8 +185,10 @@ an explicitly authorized VPN and compatible access rules. Immich login is still
 required inside the LAN. Create the first admin account promptly after deployment.
 
 Samba binds only the configured LAN IP, TCP 445, with its own LAN client
-allowlist. SMB2/3 and authentication are required; NetBIOS, guests, printers and
-symlink traversal are disabled. No Immich, game, or backup path is exported.
+allowlist. SMB2/3 is required; the host explicitly permits guest-only access.
+Guests map to the dedicated `shared` Unix account with the same private file/
+directory modes, not world-writable permissions. NetBIOS, printers and symlink
+traversal are disabled. No Immich, game, or backup path is exported.
 There is no Ansible-owned firewall in this repository. Inspection found nftables
 and UFW services inactive, which does **not** establish whether rules exist.
 Before applying, inspect `nft list ruleset` and any Docker/iptables filtering in
@@ -191,12 +205,22 @@ deployment assumes that existing readiness configuration is already applied.
 ### Connect to SMB
 
 Windows: enter `\\shared.mathijs.se\shared` in File Explorer (or Map network drive),
-then log in as **`shared`** with the Samba password. The share name and account
-name are the same, but represent different things. No Windows discovery service
-is needed. For a subfolder use `\\shared.mathijs.se\shared\folder`. This is an
+without a Samba username/password. No Windows discovery service is needed.
+For a subfolder use `\\shared.mathijs.se\shared\folder`. This is an
 SMB path, not a browser URL. Pi-hole supplies the private `shared.mathijs.se`
 record; clients must use LAN DNS. `\\192.168.68.111\shared` also works without
 DNS. No Caddy route, HTTPS certificate or public DNS record is needed for SMB.
+
+**Windows compatibility:** modern Windows commonly blocks insecure guest SMB;
+Windows 11 24H2 and later also commonly require signing. Guest sessions cannot
+provide SMB signing/encryption. A credential prompt or policy-block message does
+not mean you need to create a Samba password for this mode. Guest access may
+require weakening client-wide guest/signing/encryption policies; this repository
+does **not** change them. Review [Microsoft's guest SMB guidance](https://learn.microsoft.com/en-us/windows-server/storage/file-server/enable-insecure-guest-logons-smb2-and-smb3)
+before choosing those client changes. If you do not want to weaken Windows
+policies, switch the share back to authenticated mode and save its credentials.
+Remove only this server's stale saved SMB credentials/connections if switching
+from an earlier authenticated setup; do not disconnect unrelated shares.
 
 Linux: open `smb://shared.mathijs.se/shared` in a file manager, or install `cifs-utils`
 on the **client** and mount interactively:
@@ -204,13 +228,13 @@ on the **client** and mount interactively:
 ```bash
 sudo mkdir -p /mnt/homelab-shared
 sudo mount -t cifs //shared.mathijs.se/shared /mnt/homelab-shared \
-  -o username=shared,vers=3.1.1,uid="$(id -u)",gid="$(id -g)",nosuid,nodev
+  -o guest,vers=3.1.1,uid="$(id -u)",gid="$(id -g)",nosuid,nodev
 ```
 
-Enter the password at the prompt, not in shell history. For persistent client
-mounts, use a private root-owned 0600 credentials file rather than plaintext
-credentials in fstab. Test file creation, nested directories, editing and
-deletion from both client types; unauthenticated access must fail.
+Choose anonymous/guest access if the Linux file manager asks. Guest mounts need
+no credentials file. Test file creation, nested directories, editing and deletion
+from both client types without credentials. Off-subnet access must still fail;
+clients must not be able to follow share symlinks into private directories.
 
 ## Immich version and resource budget
 
@@ -312,7 +336,7 @@ ss -lnt
 Require all four Immich containers running/healthy, no published 2283/5432/6379
 ports, Samba bound only to the LAN address on 445, valid HTTPS through local
 DNS, successful browser/mobile photo and video uploads, working thumbnails and
-DB dumps, and no guest/off-subnet access. Confirm the public website, Pi-hole,
+DB dumps, working LAN guest SMB and no off-subnet access. Confirm the public website, Pi-hole,
 Home Tools and expected Valheim state are unchanged. Missing-mount behavior is
 covered with local fixtures; do not unmount live storage to test it. Arrange a
 separate owner-approved reboot window with console access and verify mount and

@@ -23,11 +23,14 @@ def named(role, file, name):
 
 
 class StorageServiceTests(unittest.TestCase):
-    def run_play(self, directory, tasks, variables, success=True):
+    def run_play(self, directory, tasks, variables, success=True, check_mode=False):
         path = directory / "play.yml"
         path.write_text(yaml.safe_dump([{"hosts": "localhost", "gather_facts": False,
                                          "vars": variables, "tasks": tasks}]))
-        result = subprocess.run(["ansible-playbook", "-i", "localhost,", "-c", "local", str(path)],
+        command = ["ansible-playbook", "-i", "localhost,", "-c", "local", str(path)]
+        if check_mode:
+            command.append("--check")
+        result = subprocess.run(command,
                                 cwd=directory, capture_output=True, text=True)
         self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
         return result
@@ -99,6 +102,9 @@ class StorageServiceTests(unittest.TestCase):
                         "create mask = 0660", "force directory mode = 2770", "follow symlinks = no"]:
             self.assertIn(setting, source)
         self.assertNotIn("0777", source)
+        self.validate_samba(source)
+
+    def validate_samba(self, source):
         command = shlex.split(os.environ.get("TESTPARM_COMMAND", "testparm"))
         if shutil.which(command[0]):
             with self.temporary() as temporary:
@@ -106,6 +112,43 @@ class StorageServiceTests(unittest.TestCase):
                 config.write_text(source)
                 result = subprocess.run(command + ["--suppress-prompt", str(config)], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_homelab_guest_mode_exports_only_shared_with_dedicated_file_identity(self):
+        defaults = yaml.safe_load((ROLES / "samba/defaults/main.yml").read_text())
+        host = yaml.safe_load((ROOT / "ansible/host_vars/homelab/main.yml").read_text())
+        self.assertFalse(defaults["samba_guest_enabled"])
+        self.assertTrue(host["samba_guest_enabled"])
+        self.assertNotIn("samba_password", host)
+        source = self.render("samba", ["smb.conf"], samba_guest_enabled=True)["smb.conf"]
+        self.assertEqual([line for line in source.splitlines() if line.startswith("[")], ["[global]", "[shared]"])
+        for setting in ["map to guest = Bad User", "guest account = shared", "guest ok = yes", "guest only = yes",
+                        "restrict anonymous = 0", "force user = shared", "force group = shared",
+                        "path = /srv/storage/shared", "hosts allow = 192.168.68.0/24", "hosts deny = ALL",
+                        "interfaces = 192.168.68.111", "bind interfaces only = yes", "smb ports = 445",
+                        "force create mode = 0660", "force directory mode = 2770", "follow symlinks = no"]:
+            self.assertIn(setting, source)
+        self.assertNotIn("valid users", source)
+        self.assertNotIn("0777", source)
+        self.validate_samba(source)
+
+    def test_guest_mode_never_reads_or_sets_passwords_and_authenticated_mode_still_requires_them(self):
+        require = named("samba", "configure", "Require the vaulted Samba password")
+        accounts = named("samba", "configure", "Inspect Samba accounts")
+        password = named("samba", "configure", "Set Samba password only for creation or explicit rotation")
+        # A guest apply must skip these operations, even with an unresolved Vault
+        # reference and no Samba binaries/passdb installed on this controller.
+        for task in [accounts, password]:
+            task.pop("ansible.builtin.command")
+            task["ansible.builtin.fail"] = {"msg": "Password database must not be accessed in guest mode"}
+        for guest, credential, check, success in [
+            (True, "{{ undefined_vault_samba_password }}", False, True),
+            (False, "short", True, False),
+            (False, "fixture-long-password", True, True),
+        ]:
+            with self.subTest(guest=guest, check=check), self.temporary() as temporary:
+                self.run_play(Path(temporary), [require, accounts, password], {
+                    "samba_guest_enabled": guest, "samba_password": credential,
+                }, success, check_mode=check)
 
     def test_unmanaged_samba_configuration_is_not_overwritten(self):
         guard = named("samba", "configure", "Refuse to replace unmanaged Samba configuration")

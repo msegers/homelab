@@ -1,5 +1,7 @@
 ---
 samba_enabled: false
+# Guest access must be explicitly enabled; reusable defaults stay authenticated.
+samba_guest_enabled: false
 samba_bind_ip: 127.0.0.1
 samba_allowed_networks: [127.0.0.0/8]
 samba_share_name: shared

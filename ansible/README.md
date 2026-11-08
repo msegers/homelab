@@ -174,7 +174,9 @@ manager. For later edits, use `ansible-vault edit host_vars/homelab/vault.yml`.
 
 For the already initialized RAID, private SMB, Immich and Valheim backup
 configuration, first follow [storage services](../docs/storage-services.md).
-The host settings now require additional vaulted Samba and Immich DB passwords.
+The host requires an additional vaulted Immich DB password. Samba is explicitly
+guest-only on this LAN and does not require a password; see the security and
+Windows compatibility notes in that guide. Reusable defaults remain authenticated.
 Do **not** repeat storage initialization. Independent deployments use `samba.yml`
 and `immich.yml`; initial private Immich DNS/Caddy setup uses the normal full play.
 
