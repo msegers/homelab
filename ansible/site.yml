@@ -10,9 +10,10 @@
     - common
     - docker
     - compose
+    # Refresh Caddy's exact dashboard peer before optional new services can fail.
+    - role: valheim
+      tags: [valheim]
     - role: samba
       tags: [samba]
     - role: immich
       tags: [immich]
-    - role: valheim
-      tags: [valheim]

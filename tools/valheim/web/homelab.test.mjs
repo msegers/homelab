@@ -6,6 +6,15 @@ import vm from 'node:vm';
 const source = readFileSync(new URL('./homelab.js', import.meta.url), 'utf8');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
+test('shared storage contains only the two SMB links', () => {
+  const html = readFileSync(new URL('./homelab.html', import.meta.url), 'utf8');
+  const section = html.split('aria-labelledby="shared-heading"')[1].split('</section>')[0];
+  assert.deepEqual(Array.from(section.matchAll(/href="([^"]+)"/g), match => match[1]), [
+    'smb://shared.mathijs.se/shared', 'smb://192.168.68.111/shared',
+  ]);
+  assert.doesNotMatch(section, /<p>|<button/);
+});
+
 async function page() {
   const element = (tagName) => ({ tagName, text: '', dataset: {}, style: {}, children: [], attributes: {},
     get textContent() { return this.text; },

@@ -25,6 +25,19 @@ ROLE = ROOT / "ansible/roles/compose"
 
 
 class HomeToolsDnsTests(unittest.TestCase):
+    def test_proxy_refresh_precedes_optional_services_and_share_links_match_inventory(self):
+        roles = yaml.safe_load((ROOT / "ansible/site.yml").read_text())[0]["roles"]
+        names = [role["role"] if isinstance(role, dict) else role for role in roles]
+        self.assertLess(names.index("compose"), names.index("valheim"))
+        self.assertLess(names.index("valheim"), names.index("samba"))
+        self.assertLess(names.index("valheim"), names.index("immich"))
+        host = yaml.safe_load((ROOT / "ansible/host_vars/homelab/main.yml").read_text())
+        samba = yaml.safe_load((ROOT / "ansible/roles/samba/defaults/main.yml").read_text())
+        html = (ROOT / "tools/valheim/web/homelab.html").read_text()
+        self.assertTrue(host["samba_enabled"] and host["samba_guest_enabled"])
+        for server in ["shared.mathijs.se", host["compose_bind_ip"]]:
+            self.assertIn(f'href="smb://{server}/{samba["samba_share_name"]}"', html)
+
     def test_render_works_without_the_opencode_temporary_directory(self):
         with mock.patch.object(Path, "is_dir", return_value=False):
             self.render(None)

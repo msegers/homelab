@@ -125,7 +125,9 @@ mismatch. Review a separate credential-rotation procedure if needed.
 
 The committed host settings enable these services; reusable role defaults are
 disabled. `site.yml` provisions storage first, the existing Docker/Caddy stack,
-then SMB and Immich. Independent service playbooks require existing Docker,
+then refreshes the existing Valheim dashboard/proxy trust before SMB and Immich.
+This prevents a failure in a new optional service from skipping that refresh.
+Independent service playbooks require existing Docker,
 the proxy network, and mounted/verified storage; they do not provision those
 dependencies or reconfigure other services.
 
@@ -210,6 +212,9 @@ For a subfolder use `\\shared.mathijs.se\shared\folder`. This is an
 SMB path, not a browser URL. Pi-hole supplies the private `shared.mathijs.se`
 record; clients must use LAN DNS. `\\192.168.68.111\shared` also works without
 DNS. No Caddy route, HTTPS certificate or public DNS record is needed for SMB.
+
+The `/homelab` dashboard includes hostname and IP SMB links. Update these static
+links alongside inventory if the share's addresses/name change.
 
 **Windows compatibility:** modern Windows commonly blocks insecure guest SMB;
 Windows 11 24H2 and later also commonly require signing. Guest sessions cannot
