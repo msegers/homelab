@@ -1,0 +1,3 @@
+# Ethernet preparation only: activated manually, not at boot or hotplug.
+iface eno1 inet dhcp
+    metric 600

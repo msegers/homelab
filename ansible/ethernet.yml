@@ -1,0 +1,40 @@
+---
+- name: Prepare Ethernet DHCP without changing active networking
+  hosts: homelab_hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Inspect the Ethernet snippet without following symlinks
+      ansible.builtin.stat:
+        path: /etc/network/interfaces.d/homelab-eno1
+        follow: false
+      register: ethernet_snippet
+
+    - name: List existing ifupdown interfaces
+      ansible.builtin.command:
+        argv: [/usr/sbin/ifquery, --list]
+      register: ethernet_interfaces
+      changed_when: false
+      check_mode: false
+
+    - name: Refuse existing unmanaged Ethernet configuration
+      ansible.builtin.assert:
+        that:
+          - >-
+            not ethernet_snippet.stat.exists or
+            (ethernet_snippet.stat.isreg | default(false) and
+             not ethernet_snippet.stat.islnk | default(false) and
+             ethernet_snippet.stat.checksum | default('') ==
+             lookup('ansible.builtin.file', 'files/eno1.interfaces', rstrip=False) | hash('sha1'))
+          - "'eno1' not in ethernet_interfaces.stdout_lines or ethernet_snippet.stat.exists"
+        fail_msg: Ethernet already has local configuration; review it before proceeding. Nothing was overwritten.
+
+    - name: Install inactive Ethernet DHCP configuration
+      ansible.builtin.copy:
+        src: files/eno1.interfaces
+        dest: /etc/network/interfaces.d/homelab-eno1
+        owner: root
+        group: root
+        mode: '0644'
+        force: false
+        validate: /usr/sbin/ifquery --interfaces=%s --list
