@@ -218,6 +218,45 @@ curl -I --resolve pihole.mathijs.se:443:192.168.68.111 https://pihole.mathijs.se
 Before switching public website traffic, complete the
 [HTTPS checklist](../docs/compose.md#https-and-public-cutover).
 
+### Prepare Ethernet (Wi-Fi remains primary)
+
+The existing `/etc/network/interfaces` must include `/etc/network/interfaces.d/`.
+From `ansible/`, run only when ready:
+
+```bash
+ansible-playbook ethernet.yml --check --ask-vault-pass --ask-become-pass
+ansible-playbook ethernet.yml --ask-vault-pass --ask-become-pass
+```
+
+This installs an `eno1` DHCP stanza with metric 600, **without auto/hotplug
+activation**. It does not bring up Ethernet, touch Wi-Fi, change Docker/readiness,
+restart services or reboot. Existing unmanaged Ethernet configuration is refused.
+The main interfaces file and its WPA credentials remain untouched.
+
+For a later manual switch, use a local console and a maintenance window:
+
+1. Back up `/etc/network/interfaces` and the existing readiness drop-ins locally
+   in a root-only directory. Record the Wi-Fi/eno1 MACs and router/DNS settings.
+2. Keep DHCP: move the router's `192.168.68.111` reservation from Wi-Fi to eno1's
+   MAC manually. Clear conflicting leases; never assign `.111` to both NICs.
+3. Use `vim` to remove Wi-Fi from its auto/hotplug list and add `auto eno1` to
+   `/etc/network/interfaces.d/homelab-eno1`. Keep the Wi-Fi stanza for rollback.
+   From the console, `ifdown wlp0s20f3`, then `ifup eno1`—not a global restart.
+4. Verify `ip -4 address show dev eno1`, `ip -4 route`, DNS, and a new SSH
+   connection to `.111`. If DHCP gives another address, fix the reservation or
+   roll back; do not change service bind addresses or DNS records.
+5. Only after that handoff, change `docker_ifupdown_wait_online_interface` to
+   `eno1` in host variables and apply the existing `docker-networking` tag and
+   Samba configuration. Review service-impacting changes before applying. Test
+   Pi-hole, Caddy, Valheim, Immich, Samba and Tailscale before an approved reboot.
+
+If testing Ethernet while Wi-Fi is still active, do it at the console: metric 600
+alone does **not** protect SSH from same-subnet routing/ARP or DHCP DNS changes.
+Check its DHCP lease with `ip -4 address show dev eno1` and the router lease table;
+test SSH to that temporary lease separately. This playbook deliberately does not
+activate that trial. To roll back without SSH, use the console to bring eno1 down,
+restore the Wi-Fi reservation/configuration/readiness backups, and bring Wi-Fi up.
+
 ### Docker networking after reboot (Debian/ifupdown Wi-Fi)
 
 Read-only inspection and owner-provided diagnostics confirmed **ifupdown** with
