@@ -23,6 +23,8 @@ pub struct Config {
     pub worlds_dir: PathBuf,
     pub config_dir: PathBuf,
     pub backups_dir: PathBuf,
+    #[serde(default)]
+    pub required_mount_uuids: HashMap<PathBuf, String>,
     #[serde(default = "backups_enabled")]
     pub pre_change_backups: bool,
     pub state_dir: PathBuf,
@@ -37,7 +39,72 @@ fn backups_enabled() -> bool {
     true
 }
 
+#[derive(Deserialize)]
+struct StorageMount {
+    uuid: Option<String>,
+    fstype: String,
+    options: String,
+}
+
+fn storage_mount(path: &Path, exact: bool) -> Result<StorageMount> {
+    let output = std::process::Command::new("/usr/bin/findmnt")
+        .args(["--json", if exact { "--mountpoint" } else { "--target" }])
+        .arg(path)
+        .args(["--output", "UUID,FSTYPE,OPTIONS"])
+        .output()
+        .context("Cannot inspect storage filesystem")?;
+    ensure!(output.status.success(), "Storage filesystem is unavailable");
+    let mounts: Value = serde_json::from_slice(&output.stdout)?;
+    let mounted = mounts["filesystems"]
+        .as_array()
+        .and_then(|entries| entries.first())
+        .context("Storage filesystem was not found")?;
+    Ok(serde_json::from_value(mounted.clone())?)
+}
+
+fn verify_storage_mounts(
+    required: &HashMap<PathBuf, String>,
+    backups: &Path,
+    mut probe: impl FnMut(&Path, bool) -> Result<StorageMount>,
+) -> Result<()> {
+    for (path, uuid) in required {
+        let mount = probe(path, true).context("Cannot verify required storage mount")?;
+        ensure!(
+            mount.uuid.as_ref() == Some(uuid) && mount.fstype == "ext4",
+            "Required storage filesystem is missing or has the wrong UUID/type"
+        );
+        // ProtectSystem=strict makes the array root read-only in the broker's
+        // namespace. Only its explicitly allowed backup subdirectory is writable.
+    }
+    if !required.is_empty() {
+        let mount =
+            probe(backups, false).context("Cannot inspect backup destination filesystem")?;
+        let expected = required
+            .iter()
+            .filter(|(path, _)| backups.starts_with(path))
+            .max_by_key(|(path, _)| path.components().count());
+        if let Some((_, uuid)) = expected {
+            ensure!(
+                mount.uuid.as_ref() == Some(uuid) && mount.fstype == "ext4",
+                "Backup destination is not on the required storage filesystem"
+            );
+        }
+        ensure!(
+            mount.options.split(',').any(|option| option == "rw")
+                && !mount.options.split(',').any(|option| option == "ro"),
+            "Backup destination filesystem is read-only"
+        );
+    }
+    Ok(())
+}
+
 impl Config {
+    /// Fail closed before starting a container or creating a backup. Missing
+    /// mounts must never turn a RAID backup path into an SSD directory.
+    pub fn verify_storage(&self) -> Result<()> {
+        verify_storage_mounts(&self.required_mount_uuids, &self.backups_dir, storage_mount)
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let config: Self =
             serde_json::from_slice(&fs::read(path).context("Cannot read control settings")?)
@@ -51,6 +118,98 @@ impl Config {
             "Invalid idle settings"
         );
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    const UUID: &str = "12345678-1234-1234-1234-123456789abc";
+
+    fn mount(uuid: &str, fstype: &str, options: &str) -> StorageMount {
+        serde_json::from_value(json!({"uuid": uuid, "fstype": fstype, "options": options})).unwrap()
+    }
+
+    fn required() -> HashMap<PathBuf, String> {
+        HashMap::from([("/srv/storage".into(), UUID.into())])
+    }
+
+    #[test]
+    fn sandbox_readonly_array_root_allows_only_writable_backup_submount() {
+        let backups = Path::new("/srv/storage/backups/valheim");
+        for root_options in ["rw,relatime", "ro,nosuid,relatime"] {
+            let mut calls = Vec::new();
+            verify_storage_mounts(&required(), backups, |path, exact| {
+                calls.push((path.to_path_buf(), exact));
+                if exact {
+                    assert_eq!(path, Path::new("/srv/storage"));
+                    Ok(mount(UUID, "ext4", root_options))
+                } else {
+                    assert_eq!(path, backups);
+                    Ok(mount(UUID, "ext4", "rw,nosuid,relatime"))
+                }
+            })
+            .unwrap();
+            assert_eq!(calls.len(), 2);
+        }
+    }
+
+    #[test]
+    fn readonly_or_foreign_backup_destination_is_rejected() {
+        for (uuid, fstype, options) in [
+            (UUID, "ext4", "ro,relatime"),
+            (UUID, "ext4", "rw,relatime,ro"),
+            ("ssd-uuid", "ext4", "rw,relatime"),
+            (UUID, "nfs", "rw,relatime"),
+        ] {
+            let result = verify_storage_mounts(
+                &required(),
+                Path::new("/srv/storage/backups/valheim"),
+                |_, exact| {
+                    Ok(if exact {
+                        mount(UUID, "ext4", "ro,nosuid,relatime")
+                    } else {
+                        mount(uuid, fstype, options)
+                    })
+                },
+            );
+            assert!(result.is_err(), "{uuid} {fstype} {options}");
+        }
+    }
+
+    #[test]
+    fn missing_or_wrong_array_cannot_fall_back_to_a_writable_destination() {
+        for missing in [true, false] {
+            let result = verify_storage_mounts(
+                &required(),
+                Path::new("/srv/storage/backups/valheim"),
+                |_, exact| {
+                    assert!(exact, "Must fail before examining a possible SSD fallback");
+                    if missing {
+                        bail!("Mount missing");
+                    }
+                    Ok(mount("ssd-uuid", "ext4", "rw,relatime"))
+                },
+            );
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn explicit_existing_ssd_backup_path_is_not_implicitly_migrated() {
+        verify_storage_mounts(
+            &required(),
+            Path::new("/var/lib/homelab-valheim/backups"),
+            |_, exact| {
+                Ok(if exact {
+                    mount(UUID, "ext4", "ro,nosuid,relatime")
+                } else {
+                    mount("ssd-uuid", "ext4", "rw,relatime")
+                })
+            },
+        )
+        .unwrap();
     }
 }
 
@@ -125,6 +284,7 @@ impl<E: Engine> Controller<E> {
     }
 
     pub fn start(&self, recreate: bool) -> Result<()> {
+        self.config.verify_storage()?;
         self.engine.inspect()?; // Refuse another project's container before Compose.
         let world = self.world()?;
         save_json(
@@ -170,6 +330,7 @@ impl<E: Engine> Controller<E> {
     }
 
     pub fn restart(&self) -> Result<String> {
+        self.config.verify_storage()?;
         self.stop()
             .context("Restart aborted: Valheim could not be stopped cleanly")?;
         self.start(true)
@@ -215,6 +376,7 @@ impl<E: Engine> Controller<E> {
         label: &str,
         operation: impl FnOnce() -> Result<String>,
     ) -> Result<String> {
+        self.config.verify_storage()?;
         let was_running = self.engine.inspect()?.is_some_and(|i| i.running);
         if was_running {
             self.stop()?;
@@ -240,6 +402,7 @@ impl<E: Engine> Controller<E> {
     }
 
     pub fn backup(&self) -> Result<String> {
+        self.config.verify_storage()?;
         self.while_stopped("Backup", || self.archive())
     }
 

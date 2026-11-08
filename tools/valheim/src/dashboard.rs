@@ -35,6 +35,7 @@ const MAX_RESPONSE: u64 = 65536;
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Action {
+    Metrics,
     Status,
     Start,
     Stop,
@@ -47,6 +48,7 @@ pub enum Action {
 impl Action {
     fn name(self) -> &'static str {
         match self {
+            Self::Metrics => "metrics",
             Self::Status => "status",
             Self::Start => "start",
             Self::Stop => "stop",
@@ -305,7 +307,35 @@ impl WebState {
 
 pub fn router(state: WebState) -> Router {
     Router::new()
-        .route("/", get(|| async { Redirect::temporary("/valheim") }))
+        .route("/", get(|| async { Redirect::temporary("/homelab") }))
+        .route(
+            "/homelab",
+            get(|| async {
+                (
+                    [("content-type", "text/html; charset=utf-8")],
+                    include_str!("../web/homelab.html"),
+                )
+            }),
+        )
+        .route(
+            "/homelab.js",
+            get(|| async {
+                (
+                    [("content-type", "text/javascript; charset=utf-8")],
+                    include_str!("../web/homelab.js"),
+                )
+            }),
+        )
+        .route(
+            "/homelab.css",
+            get(|| async {
+                (
+                    [("content-type", "text/css; charset=utf-8")],
+                    include_str!("../web/homelab.css"),
+                )
+            }),
+        )
+        .route("/api/metrics", get(metrics))
         .route(
             "/valheim",
             get(|| async {
@@ -414,6 +444,18 @@ async fn status(State(state): State<WebState>) -> Response {
         .response()
 }
 
+async fn metrics(State(state): State<WebState>) -> Response {
+    match timeout(
+        Duration::from_secs(20),
+        broker_request(&state.socket, Action::Metrics),
+    )
+    .await
+    {
+        Ok(reply) => reply.response(),
+        Err(_) => Reply::failure("Statistics timed out; try refreshing later.").response(),
+    }
+}
+
 async fn worlds(State(state): State<WebState>) -> Response {
     broker_request(&state.socket, Action::Worlds)
         .await
@@ -446,7 +488,10 @@ async fn action(
     };
     if origin != format!("{scheme}://{host}")
         || token != state.token
-        || matches!(command.action, Action::Status | Action::Worlds)
+        || matches!(
+            command.action,
+            Action::Status | Action::Worlds | Action::Metrics
+        )
     {
         return (
             StatusCode::FORBIDDEN,
@@ -502,10 +547,45 @@ pub async fn broker_command(path: &Path, command: Command) -> Reply {
     }
 }
 
+type MetricsCache = Arc<std::sync::Mutex<Option<(std::time::Instant, Value)>>>;
+
+fn cached_metrics(cache: &MetricsCache, collect: impl FnOnce() -> Value) -> Value {
+    let mut cache = cache.lock().expect("Metrics cache poisoned");
+    if let Some((at, value)) = &*cache
+        && at.elapsed() < Duration::from_secs(10)
+    {
+        return value.clone();
+    }
+    let value = collect();
+    *cache = Some((std::time::Instant::now(), value.clone()));
+    value
+}
+
+#[cfg(test)]
+mod metrics_cache_tests {
+    use super::*;
+
+    #[test]
+    fn cache_reuses_samples_until_expired() {
+        let cache: MetricsCache = Arc::new(std::sync::Mutex::new(None));
+        let first = serde_json::json!({"sampled_at": "first"});
+        assert_eq!(cached_metrics(&cache, || first.clone()), first);
+        assert_eq!(
+            cached_metrics(&cache, || panic!("Must reuse sample")),
+            first
+        );
+        cache.lock().unwrap().as_mut().unwrap().0 =
+            std::time::Instant::now() - Duration::from_secs(11);
+        let second = serde_json::json!({"sampled_at": "second"});
+        assert_eq!(cached_metrics(&cache, || second.clone()), second);
+    }
+}
+
 async fn handle_broker(
     mut stream: UnixStream,
     config: PathBuf,
     operation: Arc<Mutex<()>>,
+    metrics_cache: MetricsCache,
 ) -> Result<()> {
     let mut bytes = Vec::new();
     timeout(
@@ -522,8 +602,15 @@ async fn handle_broker(
                 .await?;
             return Ok(());
         }
-        if let Ok(_guard) = operation.try_lock() {
+        if let Ok(guard) = operation.try_lock_owned() {
             tokio::task::spawn_blocking(move || {
+                let _guard = guard;
+                if matches!(command.action, Action::Metrics) {
+                    return Reply::success(cached_metrics(&metrics_cache, || {
+                        serde_json::to_value(crate::metrics::collect())
+                            .expect("Metrics are serializable")
+                    }));
+                }
                 let result = Config::load(&config).and_then(|config| {
                     let engine = DockerEngine(config.clone());
                     Controller { config, engine }.run_with_seed(
@@ -603,12 +690,14 @@ pub async fn broker(path: &Path, config: PathBuf) -> Result<()> {
 
 pub async fn serve_broker(listener: UnixListener, config: PathBuf) -> Result<()> {
     let operation = Arc::new(Mutex::new(()));
+    let metrics_cache: MetricsCache = Arc::new(std::sync::Mutex::new(None));
     loop {
         let (stream, _) = listener.accept().await?;
         let config = config.clone();
         let operation = operation.clone();
+        let metrics_cache = metrics_cache.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_broker(stream, config, operation).await {
+            if let Err(error) = handle_broker(stream, config, operation, metrics_cache).await {
                 eprintln!("Broker request failed: {error}");
             }
         });

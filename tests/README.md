@@ -57,3 +57,23 @@ configuration in a temporary file. A restricted-PATH check-mode test runs only
 Tests never open real disks, mount a filesystem, or run destructive commands.
 Real-disk initialization, completed resync, and
 reboot acceptance remain owner-run steps in `docs/storage.md`.
+
+`test_storage_services.py` checks exact writable RAID UUID guards, authenticated
+default and owner-enabled guest-only single-share SMB configurations, guest-mode
+password-task skipping, unmanaged-config refusal, release-matched Immich
+Compose storage/network isolation, mount-dependent units and independent disable.
+Set `TESTPARM_COMMAND` if Samba's parser is available outside PATH. Compose/parser
+checks run when the corresponding binaries are available. Private Caddy route
+integration tests include Immich, testing allowed/denied peers and forged headers.
+Rust controller tests additionally ensure missing storage blocks game start and
+archive creation without stopping the running game. No real mount is removed.
+
+Storage-service review regressions also cover Samba's first/partial stock-config
+installation, exact stock checksum and inactive-service adoption, managed-only
+enable/disable guards, and a second apply. Mutating systemd operations are mocked;
+no real package installation or service stop is performed. Immich directory tests
+execute the real Ansible file/stat tasks in temporary paths and preserve simulated
+container-managed metadata. Lifecycle tests parse Compose/systemd configuration
+and execute the mount condition against an unmounted temporary directory; they
+do **not** crash/restart real containers. Valheim fixtures check PUID/PGID, backup
+bind safety, unchanged saves/archives and missing/foreign RAID rejection.

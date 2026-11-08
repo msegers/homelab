@@ -1,0 +1,14 @@
+---
+samba_enabled: false
+# Guest access must be explicitly enabled; reusable defaults stay authenticated.
+samba_guest_enabled: false
+samba_bind_ip: 127.0.0.1
+samba_allowed_networks: [127.0.0.0/8]
+samba_share_name: shared
+samba_user: shared
+samba_group: shared
+samba_share_path: /srv/storage/shared
+# On ifupdown Wi-Fi, reuse the existing instance readiness correction.
+samba_network_ready_unit: ""
+# Supply samba_password through Ansible Vault. Password updates are explicit.
+samba_update_password: false

@@ -1,0 +1,24 @@
+[Unit]
+Description=Private Immich Compose stack
+Requires=docker.service
+After=docker.service srv-storage.mount
+RequiresMountsFor=/srv/storage
+BindsTo=srv-storage.mount
+PartOf=docker.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory={{ immich_project_dir }}
+# A missing/wrong/read-only mount skips startup rather than triggering retries.
+ExecCondition=/usr/bin/findmnt --noheadings --mountpoint /srv/storage --source UUID={{ nas_storage_expected_uuid }} --types ext4 --options rw
+# Any container exit (including code 0) stops the stack; systemd retries as a unit.
+ExecStart=/usr/bin/docker compose --project-directory {{ immich_project_dir }} up --timeout 120 --abort-on-container-exit --remove-orphans
+ExecStop=/usr/bin/docker compose --project-directory {{ immich_project_dir }} down --timeout 120
+Restart=always
+RestartSec=15
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target

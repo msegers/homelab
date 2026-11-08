@@ -1,0 +1,11 @@
+---
+- name: Identify Samba configuration ownership without changing it
+  ansible.builtin.import_tasks: inspect.yml
+
+- name: Disable an explicitly managed private file share
+  ansible.builtin.import_tasks: disable.yml
+  when: not samba_enabled | bool
+
+- name: Configure the optional private file share
+  ansible.builtin.import_tasks: configure.yml
+  when: samba_enabled | bool

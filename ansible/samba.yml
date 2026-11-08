@@ -1,0 +1,7 @@
+---
+- name: Manage the private file share independently
+  hosts: homelab_hosts
+  become: true
+  gather_facts: true
+  roles:
+    - samba

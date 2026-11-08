@@ -1,0 +1,45 @@
+# Managed by Ansible homelab samba
+[global]
+    server role = standalone server
+    security = user
+{% if samba_guest_enabled | bool %}
+    map to guest = Bad User
+    guest account = {{ samba_user }}
+    restrict anonymous = 0
+{% else %}
+    map to guest = Never
+    restrict anonymous = 2
+{% endif %}
+    server min protocol = SMB2_02
+    smb ports = 445
+    disable netbios = yes
+    interfaces = {{ samba_bind_ip }}
+    bind interfaces only = yes
+    hosts allow = {{ samba_allowed_networks | join(' ') }}
+    hosts deny = ALL
+    load printers = no
+    disable spoolss = yes
+    printing = bsd
+    printcap name = /dev/null
+    usershare max shares = 0
+    unix extensions = no
+
+[{{ samba_share_name }}]
+    path = {{ samba_share_path }}
+{% if samba_guest_enabled | bool %}
+    guest ok = yes
+    guest only = yes
+{% else %}
+    valid users = {{ samba_user }}
+    guest ok = no
+{% endif %}
+    read only = no
+    browseable = yes
+    force user = {{ samba_user }}
+    force group = {{ samba_group }}
+    create mask = 0660
+    force create mode = 0660
+    directory mask = 2770
+    force directory mode = 2770
+    follow symlinks = no
+    wide links = no

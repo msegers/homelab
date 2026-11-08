@@ -1,0 +1,7 @@
+---
+- name: Manage Immich independently of other homelab services
+  hosts: homelab_hosts
+  become: true
+  gather_facts: true
+  roles:
+    - immich

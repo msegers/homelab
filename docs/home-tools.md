@@ -1,10 +1,93 @@
 # Home Tools (LAN only)
 
-The existing Rust dashboard now has a small Home Tools navigation shell. `/`
-redirects to `/valheim`; future tool pages can have their own routes without
+The existing Rust dashboard has a Home Tools overview at `/homelab`. `/`
+redirects to `/homelab`; Valheim controls remain at `/valheim`, without
 introducing a frontend framework or a separate service. The service/binary names
 remain `valheim-dashboard` for compatibility. Only the typed Valheim operations
-cross the restricted broker socket; the web account still has no Docker access.
+and read-only metrics cross the restricted broker socket; the web account still
+has no Docker access.
+
+## Host and Docker overview
+
+After an authorized deployment, open **`https://lab.mathijs.se/homelab`**.
+The overview shows host CPU (250 ms sample), used/total memory, uptime and
+1/5/15-minute load averages. The Host section puts machine specifications on the
+left and these four readings in a 2×2 grid on the right, stacked on mobile.
+Specifications are the DMI product name, CPU model, visible physical-core/logical-
+thread counts, and OS-usable RAM (not an inventory of installed DIMMs). These use
+small `/proc/cpuinfo` and `/sys/class/dmi/id/product_name` reads, with missing facts
+shown as unknown. Serial numbers and UUIDs are never collected.
+All Compose-managed containers, including stopped
+ones, appear with state and Docker health when configured. Running containers
+also show CPU, memory/limit, cumulative network and block I/O, and PID counts.
+Disk space is shown separately for the system/SSD filesystem (`/`) and the
+repository's RAID filesystem (`/srv/storage`): used, available, total and percentage
+used. These are filesystem counters, not a directory scan or physical-device
+inventory. RAID capacity is usable filesystem space (a mirror is not counted twice).
+Host memory uses a native HTML `<meter>`. Compact disk rows use a lightweight stacked
+CSS bar (with accessible meter semantics): used, available and filesystem reserves
+are portions of the same total. Labels and numbers accompany the colours. Normal
+mounted status is omitted; missing/unreadable disks show an error instead of a bar.
+CPU remains a numeric percentage; there are
+no chart libraries, animations or colour-coded CPU thresholds. Missing capacity
+has no bar (and is never rendered as an indeterminate task-progress indicator).
+Available space excludes reserved blocks; percentage follows `df` semantics:
+`used / (used + available)`. Thus used + available can be smaller than total.
+An exact mount-table match is required before sampling each path; an unmounted
+RAID shows **Not mounted**, not the underlying SSD's space. Sampling holds an open
+filesystem descriptor and checks its device number to avoid unmount fallback.
+Mounted is not a RAID health assessment: redundancy, SMART and rebuild status are
+not currently monitored.
+Application-specific counters (such as Pi-hole query totals) are not collected;
+this avoids adding application credentials or extra privileged integrations.
+
+One fetch runs on page load, with a manual refresh button and **no background
+polling, history database, exporter or monitoring container**. The broker caches
+snapshots for 10 seconds across clients. Each Docker command has an eight-second
+timeout; collections share the broker's operation gate, so they do not run beside
+Valheim actions. Busy/unavailable refreshes retain the previous snapshot with a
+stale warning. Partial failures show warnings and unknown values, not false zeros.
+At most 64 Compose containers are supported; an oversized list fails explicitly.
+
+The existing Ansible-owned dashboard binary/service installation deploys these
+embedded assets; no listener, proxy route, Docker socket mount or web permission
+change is needed. It currently remains coupled to the enabled Valheim dashboard.
+The broker issues fixed read-only `docker ps` / `docker stats --no-stream`
+commands, filters to Compose containers, and returns only allowlisted fields,
+never environment variables, logs or raw inspection output. Existing LAN peer,
+Host-header and browser security policies protect the new routes too.
+
+Local verification includes Rust fixture/socket tests and dependency-free browser
+logic tests (`node --test tools/valheim/web/*.test.mjs`). No live metrics or router
+acceptance has been performed. After approving deployment, verify host values
+against `free`/`uptime`, compare container metrics with `docker stats --no-stream`,
+check stopped/unhealthy services, and repeat the external-access rejection tests
+below. Compare disk space with `df -B1 / /srv/storage` (only compare the RAID if
+actually mounted). The conservative choice here is a snapshot overview, not alerting or
+long-term monitoring; independent Home Tools installation remains future work.
+
+### Collection cost
+
+Nothing is collected when the page is closed. One snapshot uses two `/proc/stat`
+reads separated by a 250 ms sleep, small `/proc` reads for memory/load/uptime, one
+mount-table read, two filesystem capacity queries, and at most two short-lived
+Docker CLI processes (`ps` plus `stats --no-stream` for running Compose containers).
+The CPU sampling wait does not busy-loop. Disk capacity queries read filesystem
+counters without walking directories or reading file contents; no `du`, SMART
+scan, RAID scrub, exporter, database or persistent history is introduced.
+Docker statistics are the largest part of the work, and can take a few seconds.
+Host sampling, disk capacity reads and Docker collection run concurrently within
+one snapshot, using two short-lived worker threads on a cache miss. Docker `ps`
+still precedes `stats` so only explicitly discovered running Compose containers
+are sampled. The response waits for all three collectors; latency is roughly the
+slowest collector rather than their sum. Docker's sampling wait therefore remains,
+so this is not an instant-load guarantee. Partial failures still preserve other
+collectors' results. The sample timestamp is assigned after collection completes.
+The 10-second shared cache and single operation gate bound repeat collection;
+there is no timer-driven polling. Actual CPU/RAM overhead has not been benchmarked
+on the homelab. This runs inside the existing dashboard/broker, with no additional
+resident service. Disk metadata queries are intended for the local SSD/ext4 RAID,
+not potentially hanging network filesystems.
 
 ## Private hostnames and trusted HTTPS
 
@@ -166,5 +249,7 @@ They do not prove live game save compatibility, clean saves during real world
 switches, router isolation, or LAN DNS resolution. Test with disposable worlds
 first. Deletion always requires a successful recovery archive, independently of
 scheduled backups; still verify real-game restoration before relying on it for
-valuable saves. Scheduled image backups remain off until the NAS is ready, while
-pre-change archives and the game's native automatic backups remain enabled.
+valuable saves. The host now enables scheduled image backups to the verified
+RAID at `/srv/storage/backups/valheim`; existing SSD archives and live saves are
+not moved. Pre-change archives and the game's native automatic backups remain
+enabled. See [storage-service deployment and safety](storage-services.md).

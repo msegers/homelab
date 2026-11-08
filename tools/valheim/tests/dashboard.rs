@@ -35,6 +35,9 @@ fn request(method: &str, path: &str) -> axum::http::request::Builder {
 async fn separate_static_assets_and_security_headers_are_served() {
     for (path, content_type) in [
         ("/valheim", "text/html"),
+        ("/homelab", "text/html"),
+        ("/homelab.css", "text/css"),
+        ("/homelab.js", "text/javascript"),
         ("/app.css", "text/css"),
         ("/app.js", "text/javascript"),
     ] {
@@ -401,13 +404,81 @@ fn broker_protocol_cannot_encode_arbitrary_commands() {
 }
 
 #[tokio::test]
-async fn root_redirects_to_valheim_page() {
+async fn root_redirects_to_homelab_page() {
     let response = router(state())
         .oneshot(request("GET", "/").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
-    assert_eq!(response.headers()["location"], "/valheim");
+    assert_eq!(response.headers()["location"], "/homelab");
+}
+
+#[tokio::test]
+async fn metrics_endpoint_uses_only_fixed_read_only_broker_command() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("metrics.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let helper = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut bytes = Vec::new();
+        stream.read_to_end(&mut bytes).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            json!({"action":"metrics"})
+        );
+        stream
+            .write_all(br#"{"ok":true,"result":{"services":[],"warnings":[]}}"#)
+            .await
+            .unwrap();
+    });
+    let response = router(WebState {
+        socket: path,
+        ..state()
+    })
+    .oneshot(request("GET", "/api/metrics").body(Body::empty()).unwrap())
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    helper.await.unwrap();
+
+    let response = router(state())
+        .oneshot(request("GET", "/api/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let response = router(state())
+        .oneshot(
+            request("POST", "/api/action")
+                .header("origin", "http://localhost:8787")
+                .header("x-valheim-token", "test-token")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"action":"metrics"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn metrics_and_new_assets_reject_untrusted_peers() {
+    for path in ["/homelab", "/homelab.js", "/homelab.css", "/api/metrics"] {
+        let response = router(state())
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("host", "localhost:8787")
+                    .extension(ConnectInfo(
+                        "203.0.113.1:1234".parse::<std::net::SocketAddr>().unwrap(),
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
 }
 
 #[tokio::test]

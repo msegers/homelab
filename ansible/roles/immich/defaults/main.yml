@@ -1,0 +1,17 @@
+---
+immich_enabled: false
+immich_version: v3.3.6
+immich_project_dir: /opt/immich
+immich_state_dir: /var/lib/homelab-immich
+immich_media_dir: /srv/storage/immich
+immich_backup_dir: /srv/storage/backups/immich
+immich_proxy_network: homelab_default
+immich_timezone: Europe/Stockholm
+# Official v3.3.6 Compose release images; review together when upgrading.
+immich_redis_image: docker.io/valkey/valkey:9@sha256:c123e3715db63d06d4ad6964884037aa0d5d4d703939b9929954112889708e1d
+immich_postgres_image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+# 8.25 GiB total ceiling leaves headroom for the OS, Valheim and existing stack.
+immich_server_memory: 4g
+immich_ml_memory: 2g
+immich_database_memory: 2g
+immich_redis_memory: 256m

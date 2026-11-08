@@ -172,7 +172,15 @@ manager. For later edits, use `ansible-vault edit host_vars/homelab/vault.yml`.
 
 ## 4. Deploy
 
-The homelab now opts into a separately gated RAID 1 role. On an uninitialized
+For the already initialized RAID, private SMB, Immich and Valheim backup
+configuration, first follow [storage services](../docs/storage-services.md).
+The host requires an additional vaulted Immich DB password. Samba is explicitly
+guest-only on this LAN and does not require a password; see the security and
+Windows compatibility notes in that guide. Reusable defaults remain authenticated.
+Do **not** repeat storage initialization. Independent deployments use `samba.yml`
+and `immich.yml`; initial private Immich DNS/Caddy setup uses the normal full play.
+
+The homelab opts into a separately gated RAID 1 role. On an uninitialized
 host, the full playbook stops before other roles until storage is deliberately
 initialized. Review the exact HDD identifiers and destructive operations in
 [NAS storage setup](../docs/storage.md) first. Use `--tags storage` for that work;

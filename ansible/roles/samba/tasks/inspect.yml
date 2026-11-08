@@ -1,0 +1,22 @@
+---
+# Also used when disabled: no password, RAID mount, package install or mutation.
+- name: Detect an existing Samba configuration
+  ansible.builtin.stat:
+    path: /etc/samba/smb.conf
+    follow: false
+  register: samba_existing_config
+
+- name: Read an existing Samba configuration
+  ansible.builtin.slurp:
+    src: /etc/samba/smb.conf
+  register: samba_existing_content
+  when: samba_existing_config.stat.exists and samba_existing_config.stat.isreg | default(false)
+  no_log: true
+
+- name: Recognize only this role's managed Samba configuration
+  ansible.builtin.set_fact:
+    samba_config_managed: >-
+      {{ samba_existing_config.stat.isreg | default(false) and
+         not samba_existing_config.stat.islnk | default(false) and
+         (samba_existing_content.content | default('') | b64decode).splitlines()[:1]
+         == ['# Managed by Ansible homelab samba'] }}

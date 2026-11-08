@@ -1,0 +1,259 @@
+---
+- name: Validate dedicated Immich locations and release
+  ansible.builtin.assert:
+    that:
+      - immich_version is match('^v[0-9]+\.[0-9]+\.[0-9]+$')
+      - immich_project_dir is match('^/opt/immich(?:-[A-Za-z0-9_-]+)?$')
+      - immich_project_dir != '/opt/homelab'
+      - immich_state_dir is match('^/var/lib/homelab-immich(?:-[A-Za-z0-9_-]+)?$')
+      - immich_state_dir != '/var/lib/homelab-valheim'
+      - immich_media_dir == '/srv/storage/immich'
+      - immich_backup_dir == '/srv/storage/backups/immich'
+      - immich_proxy_network is match('^[A-Za-z0-9_-]+$')
+      - ansible_memtotal_mb | int >= 12000
+    fail_msg: Use dedicated SSD/RAID directories, a pinned release, and enough RAM for Immich plus existing services.
+
+- name: Require an alphanumeric vaulted database password
+  ansible.builtin.assert:
+    that:
+      - immich_db_password is defined
+      - immich_db_password is match('^[A-Za-z0-9]{24,128}$')
+  no_log: true
+
+- name: Verify RAID before provisioning any media or backup paths
+  ansible.builtin.import_role:
+    name: nas_storage
+    tasks_from: verify_mount
+
+- name: Resolve Immich paths without creating directories
+  ansible.builtin.command:
+    argv: [/usr/bin/realpath, --canonicalize-missing, '{{ item }}']
+  loop:
+    - '{{ immich_project_dir }}'
+    - '{{ immich_state_dir }}'
+    - '{{ immich_state_dir }}/postgres'
+    - '{{ immich_state_dir }}/redis'
+    - '{{ immich_state_dir }}/model-cache'
+    - '{{ immich_media_dir }}'
+    - '{{ immich_backup_dir }}'
+  register: immich_paths
+  changed_when: false
+  check_mode: false
+
+- name: Reject symlink and aliased Immich paths
+  ansible.builtin.assert:
+    that: item.stdout == item.item
+  loop: '{{ immich_paths.results }}'
+  loop_control:
+    label: '{{ item.item }}'
+
+- name: Inspect the SSD filesystem for PostgreSQL and cache data
+  ansible.builtin.command:
+    argv: [/usr/bin/findmnt, --json, --target, /var/lib, --output, 'UUID,FSTYPE,TARGET']
+  register: immich_ssd_mount
+  changed_when: false
+  check_mode: false
+
+- name: Require local SSD-backed ext4 or XFS rather than RAID or a network share
+  ansible.builtin.assert:
+    that:
+      - filesystem.fstype in ['ext4', 'xfs']
+      - filesystem.uuid | default('') | length > 0
+      - filesystem.uuid != nas_storage_expected_uuid
+      - filesystem.target == '/'
+  vars:
+    filesystem: '{{ (immich_ssd_mount.stdout | from_json).filesystems[0] }}'
+
+- name: Inspect existing Immich data directories
+  ansible.builtin.stat:
+    path: '{{ item }}'
+    follow: false
+  loop: '{{ immich_paths.results | map(attribute="item") | list }}'
+  register: immich_existing_dirs
+
+- name: Refuse files or symlinks at Immich directory locations
+  ansible.builtin.assert:
+    that: not item.stat.exists or (item.stat.isdir | default(false) and not item.stat.islnk | default(false))
+  loop: '{{ immich_existing_dirs.results }}'
+  loop_control:
+    label: '{{ item.item }}'
+
+- name: Inspect actual filesystems of existing Immich directories
+  ansible.builtin.command:
+    argv: [/usr/bin/findmnt, --json, --target, '{{ item.item }}', --output, 'UUID,FSTYPE,TARGET,OPTIONS']
+  loop: '{{ immich_existing_dirs.results }}'
+  loop_control:
+    label: '{{ item.item }}'
+  when: item.stat.exists
+  register: immich_actual_filesystems
+  changed_when: false
+  check_mode: false
+
+- name: Refuse nested foreign mounts or a database on unsupported storage
+  ansible.builtin.assert:
+    that:
+      - mounted.uuid == expected_uuid
+      - mounted.fstype in ['ext4', 'xfs']
+      - "'rw' in mounted.options.split(',')"
+  loop: '{{ immich_actual_filesystems.results }}'
+  loop_control:
+    label: '{{ item.item.item }}'
+  when: item.stdout is defined
+  vars:
+    mounted: '{{ (item.stdout | from_json).filesystems[0] }}'
+    expected_uuid: '{{ nas_storage_expected_uuid if item.item.item.startswith("/srv/storage/") else (immich_ssd_mount.stdout | from_json).filesystems[0].uuid }}'
+
+- name: Require Docker already active without socket activation
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, is-active, docker.service]
+  changed_when: false
+  check_mode: false
+
+- name: Inspect existing Immich configuration ownership
+  ansible.builtin.stat:
+    path: '{{ immich_project_dir }}/{{ item }}'
+    follow: false
+  loop: [compose.yaml, .env, compose.yml, docker-compose.yml, docker-compose.yaml]
+  register: immich_existing_files
+
+- name: Refuse non-regular or symlinked Immich configuration before reading it
+  ansible.builtin.assert:
+    that: not item.stat.exists or (item.stat.isreg | default(false) and not item.stat.islnk | default(false))
+  loop: '{{ immich_existing_files.results }}'
+  loop_control:
+    label: '{{ item.item }}'
+
+- name: Read existing Immich configuration markers
+  ansible.builtin.slurp:
+    src: '{{ immich_project_dir }}/{{ item.item }}'
+  loop: '{{ immich_existing_files.results }}'
+  when: item.stat.exists
+  register: immich_existing_content
+  no_log: true
+
+- name: Refuse to overwrite unmanaged Immich configuration or silently rotate PostgreSQL credentials
+  ansible.builtin.assert:
+    that:
+      - item.item.stat.isreg | default(false)
+      - not item.item.stat.islnk | default(false)
+      - "'# Managed by Ansible' in (item.content | b64decode)"
+      - item.item.item != '.env' or ('DB_PASSWORD=' ~ immich_db_password) in (item.content | b64decode).splitlines()
+    fail_msg: Existing Immich files are unmanaged or the database password differs. Review adoption or credential rotation manually; nothing will be overwritten.
+  loop: '{{ immich_existing_content.results }}'
+  when: item.content is defined
+  no_log: true
+
+- name: Require the existing private proxy network
+  ansible.builtin.command:
+    argv: [/usr/bin/docker, network, inspect, '{{ immich_proxy_network }}', --format, '{{ "{{.Name}}" }}']
+  changed_when: false
+  check_mode: false
+
+- name: Create private Immich project and state directories
+  # Pinned server/ML images run as root; 0700 is intentional, not a UID mismatch.
+  # PostgreSQL/Valkey initialize as root and drop to uid/gid 999 inside the image.
+  # Keep their directories out of this repeat-run ownership enforcement below.
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  loop:
+    - '{{ immich_project_dir }}'
+    - '{{ immich_state_dir }}'
+    - '{{ immich_state_dir }}/model-cache'
+    - '{{ immich_media_dir }}'
+    - '{{ immich_backup_dir }}'
+
+- name: Inspect container-owned SSD directories
+  ansible.builtin.stat:
+    path: '{{ item }}'
+  loop:
+    - '{{ immich_state_dir }}/postgres'
+    - '{{ immich_state_dir }}/redis'
+  register: immich_container_dirs
+
+- name: Create only missing container-owned directories
+  ansible.builtin.file:
+    path: '{{ item.item }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  loop: '{{ immich_container_dirs.results }}'
+  when: not item.stat.exists
+  loop_control:
+    label: '{{ item.item }}'
+
+# PostgreSQL owns its initialized data directory. Never chown it on repeat runs.
+- name: Render protected Immich environment
+  ansible.builtin.template:
+    src: env.j2
+    dest: '{{ immich_project_dir }}/.env'
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+  notify: Restart Immich
+
+- name: Render release-matched Compose configuration
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: '{{ immich_project_dir }}/compose.yaml'
+    owner: root
+    group: root
+    mode: '0600'
+  notify: Restart Immich
+
+- name: Validate Immich Compose without printing secrets or starting containers
+  ansible.builtin.command:
+    argv: [/usr/bin/docker, compose, --project-directory, '{{ immich_project_dir }}', config, --quiet]
+  changed_when: false
+  when: not ansible_check_mode
+  no_log: true
+
+- name: Pull pinned Immich images before starting the mount-dependent unit
+  community.docker.docker_compose_v2_pull:
+    project_src: '{{ immich_project_dir }}'
+    policy: missing
+  when: not ansible_check_mode
+
+- name: Install the mount-dependent Immich unit
+  ansible.builtin.template:
+    src: immich.service.j2
+    dest: /etc/systemd/system/homelab-immich.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart Immich
+
+- name: Apply Immich configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable independently managed Immich
+  ansible.builtin.systemd_service:
+    name: homelab-immich.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Wait for all four Immich services to be running and healthy
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/docker
+      - compose
+      - --project-directory
+      - '{{ immich_project_dir }}'
+      - ps
+      - --all
+      - --format
+      - '{{ "{{.Service}} {{.State}} {{.Health}}" }}'
+  register: immich_health
+  changed_when: false
+  until: immich_health.stdout_lines | sort == ['database running healthy', 'immich-machine-learning running healthy', 'immich-server running healthy', 'redis running healthy']
+  # PostgreSQL's inherited healthcheck allows five minutes of initialization.
+  retries: 120
+  delay: 5
+  when: not ansible_check_mode

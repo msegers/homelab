@@ -1,0 +1,13 @@
+[Unit]
+Wants=network-online.target
+After=network-online.target
+{% if samba_network_ready_unit %}
+Requires={{ samba_network_ready_unit }}
+After={{ samba_network_ready_unit }}
+{% endif %}
+RequiresMountsFor=/srv/storage
+BindsTo=srv-storage.mount
+After=srv-storage.mount
+
+[Service]
+ExecStartPre=/usr/bin/findmnt --noheadings --mountpoint /srv/storage --source UUID={{ nas_storage_expected_uuid }} --types ext4 --options rw

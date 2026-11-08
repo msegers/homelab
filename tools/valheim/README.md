@@ -13,7 +13,7 @@ cd tools/valheim
 cargo test --locked
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
-node --test web/app.test.mjs
+node --test web/*.test.mjs
 cargo build --release --locked --target x86_64-unknown-linux-musl
 ```
 
@@ -31,8 +31,12 @@ The deployment controller must be Linux x86_64 for this default build path.
 | `src/a2s.rs` | Native UDP Steam player-count queries |
 | `src/archive.rs` | Private, consistent, non-overwriting backups |
 | `src/dashboard.rs` | HTTP API and restricted local broker |
+| `src/metrics.rs` | On-demand read-only host/Compose statistics |
+| `src/specs.rs` | Allowlisted model/CPU facts, without serial numbers or inventory commands |
+| `src/disk.rs` | SSD/RAID filesystem capacity, exact mount checks, no directory scan |
 | `src/bin/` | Two small executable entry points |
 | `web/index.html`, `web/app.css`, `web/app.js` | UI, without a frontend framework |
+| `web/homelab.html`, `web/homelab.css`, `web/homelab.js` | Host and Docker overview, no background polling |
 | `tests/` | Controller and HTTP/Unix-socket regression tests |
 | `../../ansible/roles/valheim/` | Configuration, build/install, systemd units |
 
@@ -53,7 +57,7 @@ LAN browser -> private address:8787 (TCP client subnet allowlist)
 The web process has neither Docker access nor sudo authorization. Its account is
 locked and has no login shell. A root-owned runtime directory (0750, dedicated
 dashboard group) protects a 0660 broker socket. The broker accepts only typed
-`status`, `start`, `stop`, `restart`, `worlds`, `world`, and `delete` requests,
+`metrics`, `status`, `start`, `stop`, `restart`, `worlds`, `world`, `create`, and `delete` requests,
 not arbitrary commands/arguments. World mutations accept a validated save name;
 deletion additionally requires an exact typed confirmation at the broker boundary.
 Manual backup/update actions remain CLI-only through SSH.

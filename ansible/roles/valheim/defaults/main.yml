@@ -20,6 +20,7 @@ valheim_pre_change_backups: true
 valheim_data_dir: "{{ valheim_home }}/server"
 valheim_state_dir: "{{ valheim_home }}/control"
 valheim_required_mounts: []
+valheim_required_mount_uuids: {}
 
 valheim_game_bind_ip: "{{ compose_bind_ip }}"
 valheim_server_port: 2456
