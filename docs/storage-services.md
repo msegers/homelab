@@ -213,8 +213,9 @@ SMB path, not a browser URL. Pi-hole supplies the private `shared.mathijs.se`
 record; clients must use LAN DNS. `\\192.168.68.111\shared` also works without
 DNS. No Caddy route, HTTPS certificate or public DNS record is needed for SMB.
 
-The `/homelab` dashboard includes hostname and IP SMB links. Update these static
-links alongside inventory if the share's addresses/name change.
+The `/homelab` dashboard includes Linux SMB and Windows UNC links to the same
+share. The Windows link uses a file URI, which browsers may block from HTTPS.
+Update these static links alongside inventory if the share's hostname/name changes.
 
 **Windows compatibility:** modern Windows commonly blocks insecure guest SMB;
 Windows 11 24H2 and later also commonly require signing. Guest sessions cannot

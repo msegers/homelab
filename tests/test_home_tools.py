@@ -35,8 +35,9 @@ class HomeToolsDnsTests(unittest.TestCase):
         samba = yaml.safe_load((ROOT / "ansible/roles/samba/defaults/main.yml").read_text())
         html = (ROOT / "tools/valheim/web/homelab.html").read_text()
         self.assertTrue(host["samba_enabled"] and host["samba_guest_enabled"])
-        for server in ["shared.mathijs.se", host["compose_bind_ip"]]:
-            self.assertIn(f'href="smb://{server}/{samba["samba_share_name"]}"', html)
+        self.assertIn("{{ compose_bind_ip }} shared.mathijs.se", host["compose_pihole_local_hosts"])
+        for scheme in ["smb", "file"]:
+            self.assertIn(f'href="{scheme}://shared.mathijs.se/{samba["samba_share_name"]}"', html)
 
     def test_render_works_without_the_opencode_temporary_directory(self):
         with mock.patch.object(Path, "is_dir", return_value=False):
