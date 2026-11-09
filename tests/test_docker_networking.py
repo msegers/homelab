@@ -111,7 +111,7 @@ class DockerNetworkingTests(unittest.TestCase):
 
     def test_native_waiter_is_interface_specific_and_does_not_restart_services(self):
         host = yaml.safe_load((ROOT / "ansible/host_vars/homelab/main.yml").read_text())
-        self.assertEqual(host["docker_ifupdown_wait_online_interface"], "wlp0s20f3")
+        self.assertEqual(host["docker_ifupdown_wait_online_interface"], "eno1")
         defaults = yaml.safe_load((DOCKER / "defaults/main.yml").read_text())
         self.assertEqual(defaults["docker_ifupdown_wait_online_interface"], "")
         tasks = yaml.safe_load((DOCKER / "tasks/ifupdown.yml").read_text())

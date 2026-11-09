@@ -105,6 +105,32 @@ class HomeToolsDnsTests(unittest.TestCase):
         self.assertNotIn("HOME_TOOLS_DOMAIN", disabled_caddy)
         self.assertEqual(proxy["ports"], ["192.168.68.111:80:80", "192.168.68.111:443:443"])
 
+    def test_private_names_are_local_for_https_ech_without_affecting_public_zone(self):
+        host = yaml.safe_load((ROOT / "ansible/host_vars/homelab/main.yml").read_text())
+        names = [record.rsplit(maxsplit=1)[-1] for record in host["compose_pihole_local_hosts"]]
+        lines = host["compose_pihole_dnsmasq_lines"]
+        self.assertEqual(lines, [f"local=/{name}/" for name in names])
+        self.assertNotIn("local=/mathijs.se/", lines)
+        self.assertNotIn("local=/www.mathijs.se/", lines)
+        original = self.render(None)
+        self.assertNotIn("FTLCONF_misc_dnsmasq_lines", original["services"]["pihole"]["environment"])
+        managed = self.render(None, compose_pihole_dnsmasq_lines=lines)
+        self.assertEqual(managed["services"]["pihole"]["environment"].pop("FTLCONF_misc_dnsmasq_lines"), "\n".join(lines))
+        self.assertEqual(managed, original)
+        cleared = self.render(None, compose_pihole_dnsmasq_lines=[])
+        self.assertEqual(cleared["services"]["pihole"]["environment"]["FTLCONF_misc_dnsmasq_lines"], "")
+
+    def test_dns_only_tag_does_not_apply_proxy_or_website(self):
+        tasks = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
+        selected = [task for task in tasks if "pihole-dns" in task.get("tags", [])]
+        apply = next(task for task in selected if "community.docker.docker_compose_v2" in task)
+        self.assertIn("never", apply["tags"])
+        self.assertEqual(apply["community.docker.docker_compose_v2"]["services"], ["pihole"])
+        self.assertFalse(apply["community.docker.docker_compose_v2"]["dependencies"])
+        self.assertTrue(apply["no_log"])
+        self.assertFalse(any("notify" in task for task in selected))
+        self.assertEqual([task["ansible.builtin.template"]["src"] for task in selected if "ansible.builtin.template" in task], ["compose.yaml.j2"])
+
     def test_caddy_private_routes_check_real_peer_and_preserve_portless_origin(self):
         self.check_private_routes(tls=False)
 

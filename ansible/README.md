@@ -250,6 +250,15 @@ For a later manual switch, use a local console and a maintenance window:
    Samba configuration. Review service-impacting changes before applying. Test
    Pi-hole, Caddy, Valheim, Immich, Samba and Tailscale before an approved reboot.
 
+After `.111` is already on eno1, the boot-file edits in step 3 can instead be
+applied with `ansible-playbook ethernet-finish.yml --ask-vault-pass
+--ask-become-pass` (add `--check` to preview). It adds `auto eno1` to the existing
+snippet, preserving its metric, and removes standalone Wi-Fi auto/hotplug lines.
+It leaves Wi-Fi credentials untouched and does not change any live interface or
+restart services. Shared activation lines/custom snippets require manual review.
+Then apply `site.yml --tags docker-networking,samba` as in step 5. Do not rerun
+the preparation-only `ethernet.yml` after customizing the snippet.
+
 If testing Ethernet while Wi-Fi is still active, do it at the console: metric 600
 alone does **not** protect SSH from same-subnet routing/ARP or DHCP DNS changes.
 Check its DHCP lease with `ip -4 address show dev eno1` and the router lease table;

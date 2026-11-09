@@ -14,6 +14,8 @@ compose_pihole_upstreams: "8.8.8.8;8.8.4.4"
 # null leaves Pi-hole's existing local hosts unmanaged. A list owns the full list;
 # import any existing manually managed records before opting in.
 compose_pihole_local_hosts: null
+# null preserves existing custom lines; a list owns the full dnsmasq_lines list.
+compose_pihole_dnsmasq_lines: null
 
 # Optional trusted HTTPS for private routes using Cloudflare DNS-01.
 # When enabled, the public website also uses DNS-01 instead of inbound challenges.

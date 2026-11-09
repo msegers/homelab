@@ -57,6 +57,9 @@ services:
 {% if compose_pihole_local_hosts is not none %}
       FTLCONF_dns_hosts: {{ compose_pihole_local_hosts | join(';') | to_json | replace('$', '$$') }}
 {% endif %}
+{% if compose_pihole_dnsmasq_lines is not none %}
+      FTLCONF_misc_dnsmasq_lines: {{ compose_pihole_dnsmasq_lines | join('\n') | to_json | replace('$', '$$') }}
+{% endif %}
     volumes:
       - pihole_data:/etc/pihole
 

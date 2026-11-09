@@ -1,0 +1,54 @@
+---
+- name: Persist the completed Ethernet cutover without restarting networking
+  hosts: homelab_hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read Ethernet IPv4 addresses
+      ansible.builtin.command:
+        argv: [/usr/sbin/ip, -j, -4, address, show, dev, eno1]
+      register: ethernet_addresses
+      changed_when: false
+      check_mode: false
+
+    - name: Require the permanent address already on Ethernet
+      ansible.builtin.assert:
+        that:
+          - >-
+            compose_bind_ip in (ethernet_addresses.stdout | from_json |
+            map(attribute='addr_info') | flatten | map(attribute='local') | list)
+        fail_msg: Move the router reservation and obtain the permanent IP on eno1 before finalizing.
+
+    - name: Enable the existing Ethernet configuration at boot
+      ansible.builtin.lineinfile:
+        path: /etc/network/interfaces.d/homelab-eno1
+        line: auto eno1
+        insertbefore: '^iface eno1 '
+        create: false
+        validate: /usr/sbin/ifquery --interfaces=%s --list
+
+    # Leave the iface stanza and WPA credentials untouched; never display them.
+    - name: Remove standalone Wi-Fi auto and hotplug activation
+      ansible.builtin.replace:
+        path: /etc/network/interfaces
+        regexp: '(?m)^(?:auto|allow-hotplug)[ \t]+wlp0s20f3[ \t]*(?:#.*)?\r?\n'
+        replace: ''
+      no_log: true
+      diff: false
+
+    - name: Check configured boot interfaces
+      ansible.builtin.command:
+        argv: [/usr/sbin/ifquery, --list, '--allow={{ item }}']
+      loop: [auto, hotplug]
+      register: ethernet_boot_interfaces
+      changed_when: false
+      check_mode: false
+      when: not ansible_check_mode
+
+    - name: Verify Ethernet activation and no remaining Wi-Fi boot activation
+      ansible.builtin.assert:
+        that:
+          - "'eno1' in ethernet_boot_interfaces.results[0].stdout_lines"
+          - "'wlp0s20f3' not in (ethernet_boot_interfaces.results | map(attribute='stdout_lines') | flatten)"
+        fail_msg: Review any shared auto/hotplug lines or Wi-Fi snippets locally; no interface was activated or stopped.
+      when: not ansible_check_mode

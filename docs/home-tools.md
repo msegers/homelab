@@ -95,16 +95,42 @@ The host configuration explicitly allows `lab.mathijs.se` in addition to its LAN
 IP. This is a Host-header allowlist, **not DNS configuration or access control**.
 The real TCP peer must still be in `192.168.68.0/24` or loopback.
 
-Ansible prepares Pi-hole local records for `lab.mathijs.se` and
-`pihole.mathijs.se`, both pointing to `192.168.68.111`,
+Ansible prepares Pi-hole local records for `lab.mathijs.se`, `pihole.mathijs.se`,
+`photos.mathijs.se` and `shared.mathijs.se`, pointing to `192.168.68.111`,
 through `compose_pihole_local_hosts`. The reusable default is `null` (unmanaged);
 an explicit list owns **all** Pi-hole local-host records and makes that setting
 read-only in Pi-hole's UI. Import any pre-existing manual records into the list
-before deploying, so they are not replaced. No live Pi-hole configuration has
-been inspected or changed.
+before deploying, so they are not replaced.
 
-No LAN clients currently use Pi-hole for DNS. For initial testing after an
-authorized deployment, add this to a client hosts file:
+These private names also have individual `local=/name/` dnsmasq rules in
+`compose_pihole_dnsmasq_lines`. Local A records alone do not stop other record
+types being forwarded: public Cloudflare HTTPS records can advertise ECH keys
+that the local Caddy does not have, causing Chromium/Brave TLS failures or retry
+errors. The rules keep missing HTTPS/AAAA records local (no upstream answer),
+without disabling HTTPS/ECH globally or making the public `mathijs.se` zone local.
+The reusable custom-lines default is `null` (unmanaged). An explicit list owns the
+**entire** Pi-hole `misc.dnsmasq_lines` setting; import any existing custom lines
+before opting in. Applying the Compose change recreates Pi-hole and briefly
+interrupts DNS. Caddy's certificates and LAN allowlists are unchanged.
+
+For an existing installation, apply only DNS changes from `ansible/`:
+
+```bash
+ansible-playbook site.yml --tags pihole-dns --check --ask-vault-pass --ask-become-pass
+ansible-playbook site.yml --tags pihole-dns --ask-vault-pass --ask-become-pass
+```
+
+This renders the existing Compose configuration but applies **only Pi-hole**,
+without rebuilding/restarting Caddy, the website, or other services.
+
+After applying, `dig @192.168.68.111 lab.mathijs.se A` should return `.111` and
+`dig @192.168.68.111 lab.mathijs.se HTTPS` should return NOERROR with no answer,
+not Cloudflare ECH data. Public-domain queries should still resolve normally.
+Restart the phone's browser after cached HTTPS records expire. Hosts-file
+overrides alone are not a substitute for these DNS rules.
+
+For initial testing without configuring a client to use Pi-hole, add this to its
+hosts file (this overrides addresses only, not HTTPS/ECH records):
 
 ```text
 192.168.68.111 lab.mathijs.se pihole.mathijs.se
