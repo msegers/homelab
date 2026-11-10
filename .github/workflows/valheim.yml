@@ -33,10 +33,18 @@ jobs:
       - name: Install Ansible test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends samba-common-bin
+          sudo apt-get install -y --no-install-recommends samba-common-bin restic
           python3 -m venv .venv
           .venv/bin/pip install ansible
           .venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
+      - name: Install pinned rest-server for disposable backup integration
+        run: |
+          directory="$(mktemp -d)"
+          curl --fail --location --retry 3 https://github.com/restic/rest-server/releases/download/v0.14.0/rest-server_0.14.0_linux_amd64.tar.gz -o "$directory/archive.tar.gz"
+          echo "4c9c95bc079a0334e81fad379b19dc5c3353c71c2c88d652cafce2081c2b1c66  $directory/archive.tar.gz" | sha256sum --check
+          tar -xzf "$directory/archive.tar.gz" -C "$directory" --strip-components=1
+          chmod +x "$directory/rest-server"
+          echo "REST_SERVER_COMMAND=$directory/rest-server" >> "$GITHUB_ENV"
       - name: Provisioning regressions (no live deployment)
         env:
           CADDY_COMMAND: /tmp/caddy-cloudflare
@@ -51,4 +59,5 @@ jobs:
           ansible-playbook -i localhost, valheim.yml --syntax-check
           ansible-playbook -i localhost, samba.yml --syntax-check
           ansible-playbook -i localhost, immich.yml --syntax-check
+          ansible-playbook -i localhost, offsite-backup.yml --syntax-check
           ansible-playbook -i localhost, verify-vault-migration.yml --syntax-check

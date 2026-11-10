@@ -1,0 +1,40 @@
+---
+- name: Write outgoing backup secrets without logging or diff output
+  ansible.builtin.template:
+    src: '{{ item }}.j2'
+    dest: '/etc/homelab-offsite-backup/{{ item }}'
+    owner: root
+    group: root
+    mode: '0600'
+  loop: [client.env, password, ca.pem]
+  no_log: true
+  diff: false
+
+- name: Render selected backup paths and exclusions
+  ansible.builtin.template:
+    src: '{{ item }}.j2'
+    dest: '/etc/homelab-offsite-backup/{{ item }}'
+    owner: root
+    group: root
+    mode: '0600'
+  loop: [sources, excludes]
+
+- name: Install outgoing backup service and timer
+  ansible.builtin.template:
+    src: '{{ item }}.j2'
+    dest: '/etc/systemd/system/homelab-offsite-backup.{{ item }}'
+    owner: root
+    group: root
+    mode: '0644'
+  loop: [service, timer]
+  notify: Reload offsite backup units
+
+- name: Apply backup unit changes before enabling the timer
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable outgoing schedule without triggering a backup during provisioning
+  ansible.builtin.systemd_service:
+    name: homelab-offsite-backup.timer
+    enabled: true
+    state: started
+  when: not ansible_check_mode

@@ -1,0 +1,40 @@
+---
+- name: Inspect backup unit ownership before enabling or disabling
+  ansible.builtin.stat:
+    path: '/etc/systemd/system/{{ item }}'
+    follow: false
+  loop:
+    - homelab-offsite-backup.timer
+    - homelab-offsite-backup.service
+    - homelab-rest-server.service
+  register: offsite_backup_units
+
+- name: Read existing backup unit ownership markers
+  ansible.builtin.slurp:
+    src: '{{ item.stat.path }}'
+  loop: '{{ offsite_backup_units.results }}'
+  when: item.stat.exists and item.stat.isreg | default(false) and not item.stat.islnk | default(false)
+  register: offsite_backup_unit_contents
+
+- name: Refuse to adopt unmanaged backup units
+  ansible.builtin.assert:
+    that:
+      - not item.item.stat.exists or (item.content | default('') | b64decode).startswith('# Managed by Ansible homelab offsite backup\n')
+    fail_msg: Back up and explicitly resolve unmanaged backup units before proceeding.
+  loop: '{{ offsite_backup_unit_contents.results }}'
+  loop_control:
+    label: '{{ item.item.item }}'
+
+- name: Disable only installed role-managed backup units without deleting data
+  ansible.builtin.systemd_service:
+    name: '{{ item.item }}'
+    state: stopped
+    enabled: false
+  loop: '{{ offsite_backup_units.results }}'
+  when:
+    - item.stat.exists
+    - (not offsite_backup_receive_enabled | bool) if item.item == 'homelab-rest-server.service' else (not offsite_backup_send_enabled | bool)
+
+- name: Configure enabled backup directions
+  ansible.builtin.import_tasks: configure.yml
+  when: offsite_backup_send_enabled | bool or offsite_backup_receive_enabled | bool

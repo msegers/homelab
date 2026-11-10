@@ -1,0 +1,32 @@
+---
+# Independent opt-ins; no VPN, firewall, public proxy, or retention management.
+offsite_backup_send_enabled: false
+offsite_backup_receive_enabled: false
+offsite_backup_repository: ''
+offsite_backup_username: ''
+offsite_backup_http_password: ''
+offsite_backup_password: ''
+# Optional PEM CA for the friend's HTTPS endpoint; normal TLS validation stays on.
+offsite_backup_ca: ''
+offsite_backup_calendar: '*-*-* 03:30:00'
+offsite_backup_randomized_delay: 30m
+# KiB/s; conservative uplink budget, independently configurable.
+offsite_backup_upload_limit: 2048
+offsite_backup_sources:
+  - /srv/storage/shared
+  - /srv/storage/immich
+  - /srv/storage/backups/valheim
+offsite_backup_excludes: []
+# Receiver is loopback-only by default. Only an explicit Tailscale IPv4 is allowed
+# otherwise; peer access rules are a separate, owner-reviewed prerequisite.
+offsite_backup_listen_ip: 127.0.0.1
+offsite_backup_listen_port: 8000
+# Supply bcrypt htpasswd text, NOT the friend's restic encryption password.
+offsite_backup_htpasswd: ''
+offsite_backup_tls_cert: ''
+offsite_backup_tls_key: ''
+# Per repository (not a filesystem quota); 0 means unlimited, requiring monitoring.
+offsite_backup_max_size: 0
+# Pinned upstream archive, Linux amd64 only for this first implementation.
+offsite_backup_server_version: 0.14.0
+offsite_backup_server_checksum: sha256:4c9c95bc079a0334e81fad379b19dc5c3353c71c2c88d652cafce2081c2b1c66

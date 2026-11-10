@@ -31,4 +31,6 @@ ansible-playbook site.yml --ask-vault-pass
 
 [RAID-backed private SMB, Immich, backups and deployment](docs/storage-services.md).
 
+[Opt-in mutual off-site backups with restic and rest-server](docs/offsite-backup.md).
+
 Originally inspired by [Saura Sahu's homelab](https://github.com/mrsauravsahu/kube-homelab).

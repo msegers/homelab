@@ -1,0 +1,42 @@
+# Managed by Ansible homelab offsite backup
+[Unit]
+Description=Private append-only restic repository receiver
+Wants=network-online.target
+After=network-online.target srv-storage.mount
+RequiresMountsFor=/srv/storage/backups/peers
+BindsTo=srv-storage.mount
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+User=homelab-rest-server
+Group=homelab-rest-server
+LoadCredential=htpasswd:/etc/homelab-offsite-backup/htpasswd
+LoadCredential=server.crt:/etc/homelab-offsite-backup/server.crt
+LoadCredential=server.key:/etc/homelab-offsite-backup/server.key
+ExecStartPre=/usr/bin/findmnt --noheadings --mountpoint /srv/storage --source UUID={{ nas_storage_expected_uuid }} --types ext4
+ExecStartPre=/usr/bin/findmnt --noheadings --target /run/homelab-rest-server/repositories --source UUID={{ nas_storage_expected_uuid }} --types ext4 --options rw
+ExecStartPre=/usr/bin/test -w /run/homelab-rest-server/repositories
+ExecStart=/opt/homelab-rest-server-{{ offsite_backup_server_version }}/rest-server --path /run/homelab-rest-server/repositories --listen {{ offsite_backup_listen_ip }}:{{ offsite_backup_listen_port | int }} --append-only --private-repos --htpasswd-file %d/htpasswd --tls --tls-cert %d/server.crt --tls-key %d/server.key --tls-min-ver 1.3 --max-size {{ offsite_backup_max_size | int }}
+Restart=on-failure
+RestartSec=30
+UMask=0077
+ProtectSystem=strict
+ReadWritePaths=/srv/storage/backups/peers
+# Bind only the repository tree into a traversable private runtime directory;
+# private root-owned RAID parent permissions are not loosened for this account.
+RuntimeDirectory=homelab-rest-server
+RuntimeDirectoryMode=0700
+BindPaths=/srv/storage/backups/peers:/run/homelab-rest-server/repositories
+ProtectHome=true
+PrivateTmp=true
+DevicePolicy=closed
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+
+[Install]
+WantedBy=multi-user.target

@@ -276,6 +276,10 @@ Review upstream release notes, Compose changes and backups together on upgrades.
 
 ## Backups and existing monitoring
 
+For opt-in encrypted off-site copies and an independent append-only peer receiver,
+see [mutual off-site backups](offsite-backup.md). Transport policy and both directions
+remain disabled pending owner configuration; local RAID copies alone are not off-site.
+
 The existing image backup worker is enabled for Valheim: scheduled hourly while
 its container is running (the image is configured to skip idle backups), maximum
 age 14 days and maximum count 48 archives. Idle

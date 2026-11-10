@@ -1,0 +1,105 @@
+---
+- name: Inspect any existing receiver account before changing it
+  ansible.builtin.getent:
+    database: passwd
+    key: homelab-rest-server
+    fail_key: false
+
+- name: Refuse to take over an unrelated receiver account
+  ansible.builtin.assert:
+    that:
+      - account is none or (account[1] | int > 0 and account[1] | int < 1000 and account[4] == '/nonexistent' and account[5] == '/usr/sbin/nologin')
+  vars:
+    account: '{{ ansible_facts.getent_passwd["homelab-rest-server"] }}'
+
+- name: Create dedicated receiver group
+  ansible.builtin.group:
+    name: homelab-rest-server
+    system: true
+
+- name: Create locked receiver account
+  ansible.builtin.user:
+    name: homelab-rest-server
+    group: homelab-rest-server
+    system: true
+    create_home: false
+    home: /nonexistent
+    shell: /usr/sbin/nologin
+
+- name: Create private receiver storage without recursive ownership changes
+  ansible.builtin.file:
+    path: /srv/storage/backups/peers
+    state: directory
+    owner: homelab-rest-server
+    group: homelab-rest-server
+    mode: '0700'
+
+- name: Create root-owned pinned binary location
+  ansible.builtin.file:
+    path: '/opt/homelab-rest-server-{{ offsite_backup_server_version }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Download checksum-pinned receiver archive
+  ansible.builtin.get_url:
+    url: 'https://github.com/restic/rest-server/releases/download/v{{ offsite_backup_server_version }}/rest-server_{{ offsite_backup_server_version }}_linux_amd64.tar.gz'
+    dest: '/opt/homelab-rest-server-{{ offsite_backup_server_version }}/archive.tar.gz'
+    checksum: '{{ offsite_backup_server_checksum }}'
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Extract pinned receiver binary
+  ansible.builtin.unarchive:
+    src: '/opt/homelab-rest-server-{{ offsite_backup_server_version }}/archive.tar.gz'
+    dest: '/opt/homelab-rest-server-{{ offsite_backup_server_version }}'
+    remote_src: true
+    extra_opts: [--strip-components=1]
+    creates: '/opt/homelab-rest-server-{{ offsite_backup_server_version }}/rest-server'
+  when: not ansible_check_mode
+
+- name: Make the extracted receiver binary executable
+  ansible.builtin.file:
+    path: '/opt/homelab-rest-server-{{ offsite_backup_server_version }}/rest-server'
+    owner: root
+    group: root
+    mode: '0755'
+  when: not ansible_check_mode
+
+- name: Write receiver credentials and TLS material
+  ansible.builtin.copy:
+    content: '{{ item.content }}'
+    dest: '/etc/homelab-offsite-backup/{{ item.name }}'
+    owner: root
+    group: root
+    mode: '0600'
+  loop:
+    - {name: htpasswd, content: '{{ offsite_backup_htpasswd }}'}
+    - {name: server.crt, content: '{{ offsite_backup_tls_cert }}'}
+    - {name: server.key, content: '{{ offsite_backup_tls_key }}'}
+  no_log: true
+  diff: false
+  notify: Restart offsite receiver
+
+- name: Install isolated receiver service
+  ansible.builtin.template:
+    src: receiver.service.j2
+    dest: /etc/systemd/system/homelab-rest-server.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - Reload offsite backup units
+    - Restart offsite receiver
+
+- name: Apply receiver configuration before enabling it
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable private append-only receiver
+  ansible.builtin.systemd_service:
+    name: homelab-rest-server.service
+    enabled: true
+    state: started
+  when: not ansible_check_mode

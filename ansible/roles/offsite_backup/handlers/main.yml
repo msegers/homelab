@@ -1,0 +1,10 @@
+---
+- name: Reload offsite backup units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Restart offsite receiver
+  ansible.builtin.systemd_service:
+    name: homelab-rest-server.service
+    state: restarted
+  when: offsite_backup_receive_enabled | bool and not ansible_check_mode
