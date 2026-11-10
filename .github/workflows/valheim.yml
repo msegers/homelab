@@ -60,4 +60,5 @@ jobs:
           ansible-playbook -i localhost, samba.yml --syntax-check
           ansible-playbook -i localhost, immich.yml --syntax-check
           ansible-playbook -i localhost, offsite-backup.yml --syntax-check
+          ansible-playbook -i localhost, tailscale-policy.yml --syntax-check
           ansible-playbook -i localhost, verify-vault-migration.yml --syntax-check

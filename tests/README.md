@@ -1,5 +1,11 @@
 # Ansible regression checks
 
+`test_tailscale_policy.py` renders the controller-only backup access policy into
+temporary directories and checks exact grants, embedded Tailscale assertions,
+input validation, private output permissions and idempotence. These checks do
+not implement Tailscale's policy engine or call its API; the real policy must
+also validate in Tailscale's editor with actual identities and sharing topology.
+
 `test_offsite_backup.py` covers opt-out, secret/source/listener validation and
 rendered backup units. Set `RESTIC_COMMAND` and `REST_SERVER_COMMAND` to local
 binaries to also exercise a disposable loopback TLS repository: backup, restore,
