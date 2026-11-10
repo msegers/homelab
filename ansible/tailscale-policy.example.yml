@@ -1,0 +1,7 @@
+---
+# Copy to ../.ansible/tailscale-inputs.yml and replace ALL example values.
+# Use login names as shown by Tailscale, not the email used to send an invite.
+tailscale_policy_owner: owner@example.com
+tailscale_policy_friend: friend@example.net
+tailscale_policy_receiver_ip: 100.64.12.34
+tailscale_policy_backup_port: 8000

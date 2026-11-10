@@ -1,0 +1,43 @@
+{
+  "hosts": {
+    "homelab-backup": {{ tailscale_policy_receiver_ip | to_json }}
+  },
+  "grants": [
+    {
+      "src": [{{ tailscale_policy_owner | to_json }}],
+      "dst": ["*"],
+      "ip": ["*"]
+    },
+    {
+      "src": [{{ tailscale_policy_friend | to_json }}],
+      "dst": ["homelab-backup"],
+      "ip": ["tcp:{{ tailscale_policy_backup_port | int }}"]
+    }
+  ],
+  "ssh": [
+    {
+      "action": "check",
+      "src": [{{ tailscale_policy_owner | to_json }}],
+      "dst": ["autogroup:self"],
+      "users": ["autogroup:nonroot", "root"]
+    }
+  ],
+  "tests": [
+    {
+      "src": {{ tailscale_policy_owner | to_json }},
+      "proto": "tcp",
+      "accept": ["homelab-backup:22", "homelab-backup:{{ tailscale_policy_backup_port | int }}"]
+    },
+    {
+      "src": {{ tailscale_policy_friend | to_json }},
+      "proto": "tcp",
+      "accept": ["homelab-backup:{{ tailscale_policy_backup_port | int }}"],
+      "deny": ["homelab-backup:22", "homelab-backup:53", "homelab-backup:80", "homelab-backup:443", "homelab-backup:445", "homelab-backup:2283", "homelab-backup:8080", "192.168.68.111:22", "192.168.68.111:443", "192.168.68.111:445"]
+    },
+    {
+      "src": {{ tailscale_policy_friend | to_json }},
+      "proto": "udp",
+      "deny": ["homelab-backup:{{ tailscale_policy_backup_port | int }}", "homelab-backup:53", "homelab-backup:2456", "homelab-backup:2457", "192.168.68.111:53"]
+    }
+  ]
+}

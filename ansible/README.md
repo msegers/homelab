@@ -184,6 +184,11 @@ Optional mutual off-site backups use the independent `offsite-backup.yml` playbo
 Both sending and receiving default disabled; see [restic + rest-server setup,
 private transport prerequisites and acceptance](../docs/offsite-backup.md).
 
+`tailscale-policy.yml` is a separate **controller-only** policy renderer, never
+part of `site.yml`. It prepares a local candidate, not a live Tailscale update.
+See [Tailscale sharing/access setup](../docs/tailscale.md) before sharing a machine
+or enabling either backup direction.
+
 The homelab opts into a separately gated RAID 1 role. On an uninitialized
 host, the full playbook stops before other roles until storage is deliberately
 initialized. Review the exact HDD identifiers and destructive operations in

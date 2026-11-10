@@ -1,0 +1,51 @@
+---
+# Controller-only renderer. Never contacts Tailscale's API or provisions a host.
+- name: Prepare a reviewable Tailscale backup access policy locally
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  vars:
+    tailscale_policy_backup_port: 8000
+    tailscale_policy_output_dir: '{{ playbook_dir }}/../.ansible/tailscale'
+  tasks:
+    - name: Require explicit owner friend and receiver identities
+      ansible.builtin.assert:
+        that:
+          - tailscale_policy_owner is defined
+          - tailscale_policy_friend is defined
+          - tailscale_policy_receiver_ip is defined
+        fail_msg: Supply the actual Tailscale login identities and the receiver IPv4; see docs/tailscale.md.
+
+    - name: Validate narrow policy inputs before writing a candidate
+      ansible.builtin.assert:
+        that:
+          - tailscale_policy_owner is match('^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\Z')
+          - tailscale_policy_friend is match('^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\Z')
+          - tailscale_policy_owner != tailscale_policy_friend
+          - tailscale_policy_receiver_ip is match('^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}$')
+          - tailscale_policy_receiver_ip.split('.')[2] | int <= 255
+          - tailscale_policy_receiver_ip.split('.')[3] | int <= 255
+          - tailscale_policy_receiver_ip.split('.')[2] | int | string == tailscale_policy_receiver_ip.split('.')[2]
+          - tailscale_policy_receiver_ip.split('.')[3] | int | string == tailscale_policy_receiver_ip.split('.')[3]
+          - tailscale_policy_backup_port | string is match('^[0-9]+$')
+          - tailscale_policy_backup_port | int >= 1024
+          - tailscale_policy_backup_port | int <= 65535
+          - tailscale_policy_backup_port | int not in [2283, 8080]
+        fail_msg: Use distinct exact login identities, a Tailscale IPv4, and an unprivileged TCP backup port other than 2283/8080; wildcards and groups are not accepted as identities.
+
+    - name: Create a private local policy review directory
+      ansible.builtin.file:
+        path: '{{ tailscale_policy_output_dir }}'
+        state: directory
+        mode: '0700'
+
+    - name: Render candidate policy without applying it
+      ansible.builtin.template:
+        src: templates/tailscale-policy.json.j2
+        dest: '{{ tailscale_policy_output_dir }}/policy.candidate.json'
+        mode: '0600'
+
+    - name: Explain the manual review boundary
+      ansible.builtin.debug:
+        msg: 'Candidate only: {{ tailscale_policy_output_dir }}/policy.candidate.json. Back up and review the complete current policy, confirm user-owned nodes and SSH access, then validate with Tailscale before any owner-authorized save. Nothing was applied.'

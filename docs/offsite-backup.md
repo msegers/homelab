@@ -37,6 +37,10 @@ as a test. Valheim coverage is existing completed archives, not live saves.
 
 ## Private transport: follow-up PR
 
+The [Tailscale policy setup guide](tailscale.md) and controller-only
+`ansible/tailscale-policy.yml` renderer prepare a narrow owner/friend policy with
+allow/deny tests. They do not apply it or alter the running Tailscale client.
+
 Tailscale is already available, but this PR does not change its policy. Before
 enabling remote access, review device sharing/tags and Tailscale grants/ACLs so the
 friend can reach **only the receiver's TCP backup port**, not SSH, SMB, dashboards,
