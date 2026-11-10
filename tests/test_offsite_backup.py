@@ -103,6 +103,21 @@ class OffsiteBackupTests(unittest.TestCase):
         self.assertEqual([handler["ansible.builtin.systemd_service"].get("name") for handler in handlers],
                          [None, "homelab-rest-server.service"])
 
+    def test_existing_peer_tree_requires_ownership_and_partial_install_can_resume(self):
+        guard = named("offsite_backup", "configure", "Refuse to adopt an existing unmanaged incoming repository tree")
+        for exists, unit, marker, owner, success in [
+                (False, False, False, "root", True),
+                (True, False, False, "root", False),
+                (True, False, True, "root", False),
+                (True, False, True, "homelab-rest-server", True),
+                (True, True, True, "homelab-rest-server", True)]:
+            with self.subTest(exists=exists, unit=unit, marker=marker, owner=owner), self.temporary() as tmp:
+                values = self.defaults(offsite_backup_receive_enabled=True,
+                    offsite_backup_existing_peers={"stat": {"exists": exists, "pw_name": owner, "mode": "0700"}},
+                    offsite_backup_units={"results": [{"item": "homelab-rest-server.service", "stat": {"exists": unit}}]},
+                    offsite_backup_config_ownership={"results": [{}, {"stat": {"isreg": marker}}]})
+                self.run_play(Path(tmp), [guard], values, success)
+
     def test_rendered_units_keep_receive_and_send_permissions_separate(self):
         rendered = self.render("offsite_backup", ["service", "timer", "receiver.service", "client.env", "sources"],
                                **self.defaults())
