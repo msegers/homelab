@@ -163,7 +163,9 @@ Before trusting either direction, use a **disposable repository** to verify:
 1. Valid HTTPS/authentication, backup and byte-for-byte restore, then `restic check
    --read-data`. Wrong password and another username's repository path must fail.
 2. Create a snapshot and explicitly `restic forget SNAPSHOT_ID`: it must fail with
-   HTTP 403. `forget --keep-last 1` on a single snapshot is a no-op, not a test.
+   HTTP 403, and the snapshot must remain readable. Older restic versions may
+   still exit zero after logging that rejection, so do not rely on exit status
+   alone. `forget --keep-last 1` on a single snapshot is a no-op, not a test.
    Do not test deletion protection against irreplaceable backups.
 3. Recover a representative Immich dump/media set on a separate disposable instance
    and a Valheim archive separately; retain the encrypted Vault/config versions

@@ -149,13 +149,22 @@ class OffsiteBackupTests(unittest.TestCase):
                 for source, dest in [("service", "homelab-offsite-backup.service"),
                                      ("timer", "homelab-offsite-backup.timer"),
                                      ("receiver.service", "homelab-rest-server.service")]:
-                    (directory / dest).write_text(rendered[source])
-                result = subprocess.run(["systemd-analyze", "verify", *map(str, directory.glob("*"))],
+                    # Verify unit syntax/dependencies without requiring deployed binaries.
+                    text = rendered[source].replace("ExecStart=/usr/bin/restic ", "ExecStart=/usr/bin/true ")
+                    text = text.replace("ExecStart=/opt/homelab-rest-server-0.14.0/rest-server ",
+                                        "ExecStart=/usr/bin/true ")
+                    (directory / dest).write_text(text)
+                units = list(directory.glob("*"))
+                # Do not load the runner's unrelated system units and their warnings.
+                for target in ["sysinit", "basic", "shutdown", "timers", "network-online",
+                               "local-fs", "local-fs-pre", "umount"]:
+                    (directory / f"{target}.target").write_text(
+                        "[Unit]\nDescription=Disposable verification fixture\nDefaultDependencies=no\n")
+                result = subprocess.run(["systemd-analyze", "verify", "--man=no", *map(str, units)],
+                                        env=dict(os.environ, SYSTEMD_UNIT_PATH=str(directory)),
                                         capture_output=True, text=True)
-                # Binaries need not be installed on the test controller.
-                errors = [line for line in result.stderr.splitlines()
-                          if "not executable" not in line and "No such file or directory" not in line]
-                self.assertEqual(errors, [], result.stderr)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stderr, "")
 
     def test_existing_unmanaged_units_are_not_adopted_even_on_disable(self):
         guard = named("offsite_backup", "main", "Refuse to adopt unmanaged backup units")
@@ -205,6 +214,7 @@ class OffsiteBackupTests(unittest.TestCase):
                             urllib.request.urlopen(url, context=context, timeout=1)
                         except urllib.error.HTTPError as error:
                             self.assertEqual(error.code, 401)
+                            error.close()
                             break
                         except OSError:
                             if process.poll() is not None:
@@ -221,7 +231,8 @@ class OffsiteBackupTests(unittest.TestCase):
                     def run(*args, success=True, environment=None):
                         result = subprocess.run([restic, *args], env=environment or env,
                                                 capture_output=True, text=True, timeout=60)
-                        self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
+                        if success is not None:
+                            self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
                         return result
 
                     run("init")
@@ -238,11 +249,15 @@ class OffsiteBackupTests(unittest.TestCase):
                     snapshot = json.loads(run("snapshots", "--json").stdout)[0]["id"]
                     # Explicit snapshot ID guarantees an actual delete attempt (keep-last 1
                     # on a one-snapshot repository would be a misleading no-op).
-                    result = run("forget", snapshot, success=False)
-                    self.assertIn("403", result.stderr)
+                    # Older distro restic versions can exit zero even after a rejected
+                    # removal. Assert the HTTP denial and retained snapshot, not that
+                    # version-dependent exit status.
+                    result = run("forget", snapshot, success=None)
+                    self.assertIn("403", result.stdout + result.stderr)
                     run("snapshots", environment=dict(env, RESTIC_REPOSITORY=f"rest:{url}/other/"), success=False)
                     run("snapshots", environment=dict(env, RESTIC_REST_PASSWORD="wrong"), success=False)
-                    self.assertEqual(len(json.loads(run("snapshots", "--json").stdout)), 1)
+                    self.assertEqual([item["id"] for item in json.loads(run("snapshots", "--json").stdout)],
+                                     [snapshot])
                 finally:
                     process.terminate()
                     process.wait(timeout=10)
