@@ -180,6 +180,10 @@ Windows compatibility notes in that guide. Reusable defaults remain authenticate
 Do **not** repeat storage initialization. Independent deployments use `samba.yml`
 and `immich.yml`; initial private Immich DNS/Caddy setup uses the normal full play.
 
+Optional mutual off-site backups use the independent `offsite-backup.yml` playbook.
+Both sending and receiving default disabled; see [restic + rest-server setup,
+private transport prerequisites and acceptance](../docs/offsite-backup.md).
+
 The homelab opts into a separately gated RAID 1 role. On an uninitialized
 host, the full playbook stops before other roles until storage is deliberately
 initialized. Review the exact HDD identifiers and destructive operations in

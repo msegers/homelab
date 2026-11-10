@@ -1,0 +1,35 @@
+# Managed by Ansible homelab offsite backup
+[Unit]
+Description=Encrypted off-site restic backup to peer
+Wants=network-online.target
+After=network-online.target srv-storage.mount
+RequiresMountsFor=/srv/storage
+BindsTo=srv-storage.mount
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/homelab-offsite-backup/client.env
+# Wrong/unavailable storage is a failure, not a successful skipped backup.
+ExecStartPre=/usr/bin/findmnt --noheadings --mountpoint /srv/storage --source UUID={{ nas_storage_expected_uuid }} --types ext4
+{% for path in offsite_backup_sources %}
+ExecStartPre=/usr/bin/test -d {{ path }}
+ExecStartPre=/usr/bin/findmnt --noheadings --target {{ path }} --source UUID={{ nas_storage_expected_uuid }} --types ext4
+{% endfor %}
+# Repository initialization is deliberately manual. No forget/prune/unlock here.
+ExecStart=/usr/bin/restic backup --files-from-verbatim /etc/homelab-offsite-backup/sources --exclude-file /etc/homelab-offsite-backup/excludes --one-file-system --limit-upload {{ offsite_backup_upload_limit | int }} --tag homelab-offsite
+TimeoutStartSec=12h
+Nice=10
+IOSchedulingClass=idle
+UMask=0077
+StateDirectory=homelab-offsite-backup
+StateDirectoryMode=0700
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# Keep device-name/UUID resolution available to findmnt; no device opens needed.
+DevicePolicy=closed
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

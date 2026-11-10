@@ -1,0 +1,13 @@
+# Managed by Ansible homelab offsite backup
+[Unit]
+Description=Daily off-site restic backup
+
+[Timer]
+OnCalendar={{ offsite_backup_calendar }}
+RandomizedDelaySec={{ offsite_backup_randomized_delay }}
+# Avoid a surprise catch-up transfer when provisioning or booting the host.
+Persistent=false
+Unit=homelab-offsite-backup.service
+
+[Install]
+WantedBy=timers.target

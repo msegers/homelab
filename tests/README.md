@@ -1,5 +1,11 @@
 # Ansible regression checks
 
+`test_offsite_backup.py` covers opt-out, secret/source/listener validation and
+rendered backup units. Set `RESTIC_COMMAND` and `REST_SERVER_COMMAND` to local
+binaries to also exercise a disposable loopback TLS repository: backup, restore,
+integrity check, authentication, repository isolation and append-only deletion
+rejection. OpenSSL creates a temporary certificate; no services are installed.
+
 Requires Ansible, the collections in `ansible/requirements.yml`, PyYAML (included with
 Ansible), and Docker Compose v2. Run from the repository root:
 
