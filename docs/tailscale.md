@@ -129,6 +129,11 @@ an unknown live policy. Re-rendering overwrites only this local candidate.
    friend test from their own user-owned device. Repeat the mirrored procedure
    on their side before enabling outbound backups.
 
+If you need to roll back to the original broad policy, **revoke the new machine
+shares first**, then restore the saved policy from the web console. Restoring
+allow-all while the friend's share remains accepted would expose other ports.
+Do not remove an unrelated existing share without reviewing its owner's access.
+
 Policy tests accept the friend's TCP backup connection and reject SSH, DNS, web,
 SMB, photo/dashboard ports, UDP backup access and Valheim UDP ports. Representative
 LAN-IP denials catch accidental subnet access; they are not an exhaustive scan.
