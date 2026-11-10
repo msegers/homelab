@@ -58,7 +58,7 @@ never environment variables, logs or raw inspection output. Existing LAN peer,
 Host-header and browser security policies protect the new routes too.
 
 Local verification includes Rust fixture/socket tests and dependency-free browser
-logic tests (`node --test tools/valheim/web/*.test.mjs`). No live metrics or router
+logic tests (`node --test tools/homelab/web/*.test.mjs`). No live metrics or router
 acceptance has been performed. After approving deployment, verify host values
 against `free`/`uptime`, compare container metrics with `docker stats --no-stream`,
 check stopped/unhealthy services, and repeat the external-access rejection tests

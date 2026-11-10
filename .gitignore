@@ -1,9 +1,8 @@
+# Keep local artifacts from the retired Terraform setup out of Git.
 *.tfstate
-*.tfstate.backup
-.terraform
-terraform.tfstate
-terraform.tfstate.backup
-.terraform.lock.hc1
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
 
 # Ansible
 ansible/inventory.ini

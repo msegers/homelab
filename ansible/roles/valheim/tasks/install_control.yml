@@ -10,9 +10,9 @@
 - name: Build Rust controller and dashboard locally
   ansible.builtin.command:
     argv: ["{{ valheim_cargo_command }}", build, --release, --locked, --target, "{{ valheim_rust_target }}"]
-    chdir: "{{ role_path }}/../../../tools/valheim"
+    chdir: "{{ role_path }}/../../../tools/homelab"
   environment:
-    CARGO_TARGET_DIR: "{{ role_path }}/../../../tools/valheim/target"
+    CARGO_TARGET_DIR: "{{ role_path }}/../../../tools/homelab/target"
   delegate_to: localhost
   become: false
   run_once: true
@@ -21,7 +21,7 @@
 
 - name: Install Rust controller and dashboard
   ansible.builtin.copy:
-    src: "{{ role_path }}/../../../tools/valheim/target/{{ valheim_rust_target }}/release/{{ item }}"
+    src: "{{ role_path }}/../../../tools/homelab/target/{{ valheim_rust_target }}/release/{{ item }}"
     dest: "/usr/local/libexec/homelab-valheim/{{ item }}"
     owner: root
     group: root

@@ -19,10 +19,10 @@ Pi-hole, request ACME certificates, modify DNS, or install a trusted CA.
 These Python tests are tightly coupled to Ansible only: temporary provisioning,
 rendered Compose/systemd validation, opt-out, storage/secret handling, and the
 Ansible CLI wrapper. They never provision the real host. Runtime controller and
-dashboard tests are Rust, in `tools/valheim/`:
+dashboard tests are Rust, in `tools/homelab/`:
 
 ```bash
-cd tools/valheim
+cd tools/homelab
 cargo test --locked
 node --test web/app.test.mjs
 ```
@@ -30,7 +30,7 @@ node --test web/app.test.mjs
 Those cover idle shutdown, game lifecycle, archives/recovery, native Steam query
 parsing, HTTP access restrictions, Unix-socket operations, and UI behavior.
 Tests use fake Docker engines and local ephemeral HTTP/UDP/Unix sockets, not the
-real Docker daemon. See the [project guide](../tools/valheim/README.md).
+real Docker daemon. See the [project guide](../tools/homelab/README.md).
 
 `test_vault_migration.py` additionally checks the read-only migration verifier
 using temporary encrypted fixtures: moves preserve decryption, re-encryption/new

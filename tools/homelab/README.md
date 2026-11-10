@@ -1,7 +1,11 @@
-# Valheim tools
+# Homelab tools
 
-One Rust project for the controller, idle checker, and private dashboard. Ansible
-is the installer, not the application's source directory.
+One Rust project for the Homelab dashboard, Valheim controls, and idle checker.
+Ansible is the installer, not the application's source directory.
+
+The source directory was renamed from `tools/valheim/` to `tools/homelab/`.
+This repository-only move needs no deployment. Existing binary names, systemd
+services, and installed data paths retain their Valheim names for compatibility.
 
 ## Build and test
 
@@ -9,7 +13,7 @@ Install Rust **1.88+** with rustup on your Linux Ansible controller:
 
 ```bash
 rustup target add x86_64-unknown-linux-musl
-cd tools/valheim
+cd tools/homelab
 cargo test --locked
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings

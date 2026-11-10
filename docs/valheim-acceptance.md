@@ -6,12 +6,12 @@ that a particular Valheim version reports its player count accurately.
 
 ## Handoff status (2026-11-05)
 
-- Runtime tooling is now Rust in `tools/valheim/`: controller, systemd idle checker,
+- Runtime tooling is now Rust in `tools/homelab/`: controller, systemd idle checker,
   private dashboard, and Unix-socket broker. The Python controller and in-container
   Python player query are gone. Python remains only in Ansible-related tests.
 - Local checks cover the Rust lifecycle/archive/idle logic, native UDP query
   parsing, HTTP/Unix-socket API, UI behavior, rendered Compose/systemd units, and
-  Ansible provisioning. Commands are in [the development guide](../tools/valheim/README.md).
+  Ansible provisioning. Commands are in [the development guide](../tools/homelab/README.md).
   Static musl release binaries build locally; no live deployment was performed.
   Result: **35 Rust + 20 Ansible + 5 UI tests passed**, none skipped; formatting,
   Clippy, playbook syntax, rendered systemd verification, and diff checks passed.

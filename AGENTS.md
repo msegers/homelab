@@ -28,9 +28,9 @@
 
 ## Checks
 
-- When making changes, check whether the Homelab dashboard (`tools/valheim/`, `/homelab`) needs corresponding updates to its service list, metrics, UI, tests, or documentation.
+- When making changes, check whether the Homelab dashboard (`tools/homelab/`, `/homelab`) needs corresponding updates to its service list, metrics, UI, tests, or documentation.
 - Rust: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
-  `cargo test` from `tools/valheim/`.
+  `cargo test` from `tools/homelab/`.
 - Ansible regression tests: `python3 -m unittest discover -s tests -v`.
   Set `COMPOSE_COMMAND` if using a standalone Compose v2 binary.
 - Check playbook syntax and `git diff --check`. Keep Cargo.lock committed.

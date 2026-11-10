@@ -344,7 +344,7 @@ class ProvisionTests(unittest.TestCase):
         broker = (self.root / "valheim-dashboard-broker.service").read_text()
         self.assertIn(f"broker --config {self.root}/home/control/config.json", broker)
         self.assertNotIn("{{", web + broker)
-        binary = ROOT / "tools/valheim/target/x86_64-unknown-linux-musl/release"
+        binary = ROOT / "tools/homelab/target/x86_64-unknown-linux-musl/release"
         if shutil.which("systemd-analyze") and (binary / "valheim-dashboard").exists():
             # Verify rendered directives without installing units or requiring
             # production executables on the test machine.

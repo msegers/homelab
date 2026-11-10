@@ -33,7 +33,7 @@ class HomeToolsDnsTests(unittest.TestCase):
         self.assertLess(names.index("valheim"), names.index("immich"))
         host = yaml.safe_load((ROOT / "ansible/host_vars/homelab/main.yml").read_text())
         samba = yaml.safe_load((ROOT / "ansible/roles/samba/defaults/main.yml").read_text())
-        html = (ROOT / "tools/valheim/web/homelab.html").read_text()
+        html = (ROOT / "tools/homelab/web/homelab.html").read_text()
         self.assertTrue(host["samba_enabled"] and host["samba_guest_enabled"])
         self.assertIn("{{ compose_bind_ip }} shared.mathijs.se", host["compose_pihole_local_hosts"])
         for scheme in ["smb", "file"]:

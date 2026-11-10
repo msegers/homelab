@@ -18,18 +18,18 @@ jobs:
           targets: x86_64-unknown-linux-musl
           components: rustfmt, clippy
       - name: Rust formatting
-        working-directory: tools/valheim
+        working-directory: tools/homelab
         run: cargo fmt --check
       - name: Rust lint and tests
-        working-directory: tools/valheim
+        working-directory: tools/homelab
         run: |
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
       - name: Build static deployment binaries
-        working-directory: tools/valheim
+        working-directory: tools/homelab
         run: cargo build --release --locked --target x86_64-unknown-linux-musl
       - name: UI behavior
-        run: node --test tools/valheim/web/app.test.mjs
+        run: node --test tools/homelab/web/*.test.mjs
       - name: Install Ansible test dependencies
         run: |
           sudo apt-get update

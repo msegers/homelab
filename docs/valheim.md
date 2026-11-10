@@ -5,7 +5,7 @@ Scripts control it over SSH. An opt-in systemd timer can stop it after an hour
 empty, once player detection has passed the [live acceptance test](valheim-acceptance.md).
 The [private dashboard](#private-dashboard) provides status, start/stop/restart,
 and world management at `/valheim` inside Home Tools. Both services and the CLI controller are Rust, with source in
-[`tools/valheim/`](../tools/valheim/).
+[`tools/homelab/`](../tools/homelab/).
 
 ## Enable and choose storage
 
@@ -51,7 +51,7 @@ rustup target add x86_64-unknown-linux-musl
 
 Ansible builds the locked Rust project locally and copies static binaries to the
 host; no compiler or Rust toolchain is installed on the EliteDesk. See the
-[development guide](../tools/valheim/README.md) for build and test commands.
+[development guide](../tools/homelab/README.md) for build and test commands.
 
 Add `vault_valheim_server_password: 'YOUR_GAME_PASSWORD'` (5+ characters) using:
 
@@ -225,7 +225,7 @@ available. The new-world form also accepts an optional **seed** (1–10 letters 
 numbers, case-sensitive); blank uses random generation. Seeds apply only to new
 worlds and never alter existing saves. A seeded world is prepared before its
 first start; terrain still generates in the game. Creating/selecting while stopped
-does not start the server. See [seed implementation and acceptance checks](../tools/valheim/docs/world-seeds.md).
+does not start the server. See [seed implementation and acceptance checks](../tools/homelab/docs/world-seeds.md).
 Manual backups and updates remain CLI-only.
 
 **Auto-refresh (15s)** can be unchecked to leave the tab open without background
