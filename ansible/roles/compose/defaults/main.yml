@@ -2,6 +2,10 @@
 compose_project_dir: /opt/homelab
 # Required: compose_bind_ip is the target's LAN IPv4 address, not its SSH endpoint.
 compose_timezone: Europe/Stockholm
+# Optional dedicated Caddy egress bridge. Leave homelab_default's IPAM untouched.
+# A private /24 prefix supplies a /28 subnet: gateway .1, Caddy .2, pool .8/29.
+compose_caddy_static_ip_enabled: false
+compose_caddy_network_prefix: 172.30.255
 compose_pihole_image: pihole/pihole:latest
 compose_caddy_image: caddy:2-alpine
 compose_website_image: ghcr.io/msegers/mathijs.se:0.0.5

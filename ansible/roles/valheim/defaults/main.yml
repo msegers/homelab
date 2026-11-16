@@ -49,3 +49,5 @@ valheim_dashboard_allowed_networks: [127.0.0.0/8]
 valheim_dashboard_allowed_hosts: []
 # Empty disables proxy discovery; reusable defaults remain loopback-only.
 valheim_dashboard_proxy_container: ""
+valheim_dashboard_proxy_network_name: ""
+valheim_dashboard_proxy_expected_ipv4: ""

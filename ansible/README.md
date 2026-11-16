@@ -172,6 +172,13 @@ manager. For later edits, use `ansible-vault edit host_vars/homelab/vault.yml`.
 
 ## 4. Deploy
 
+Before applying the committed static Caddy IP settings to an existing host, review
+the [Caddy-only network migration](../docs/compose.md#stable-caddy-source-address-for-home-tools).
+It requires Compose 2.33.1+/Engine 28+, a free private /28, and a brief approved
+Caddy interruption. `site.yml --tags caddy-ip,valheim` targets that migration and
+dashboard refresh without reconciling Pi-hole/website/Immich or restarting the
+game. `valheim.yml` is the game-operation playbook, not dashboard provisioning.
+
 For the already initialized RAID, private SMB, Immich and Valheim backup
 configuration, first follow [storage services](../docs/storage-services.md).
 The host requires an additional vaulted Immich DB password. Samba is explicitly

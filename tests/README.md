@@ -1,5 +1,12 @@
 # Ansible regression checks
 
+`test_caddy_static_ip.py` checks the opt-in Caddy-only bridge, static address and
+gateway priority, unchanged app-network/service configuration, version/route/IPAM
+collision guards, targeted proxy-only apply, and source-route verification with
+local fixtures. `test_valheim.py` checks that app-network IP churn no longer alters
+the dashboard's exact trusted proxy. No test creates a Docker network or restarts
+a real service; routing/reboot acceptance is documented in `docs/compose.md`.
+
 Requires Ansible, the collections in `ansible/requirements.yml`, PyYAML (included with
 Ansible), and Docker Compose v2. Run from the repository root:
 

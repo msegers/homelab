@@ -11,6 +11,14 @@ services:
     image: {{ compose_caddy_image | to_json | replace('$', '$$') }}
 {% endif %}
     restart: unless-stopped
+{% if compose_caddy_static_ip_enabled | bool %}
+    networks:
+      default: {}
+      caddy_egress:
+        ipv4_address: {{ (compose_caddy_network_prefix ~ '.2') | to_json }}
+        # Host/LAN/WAN traffic must use the fixed source, not the dynamic app IP.
+        gw_priority: 100
+{% endif %}
     ports:
       - {{ (compose_bind_ip ~ ':80:80') | to_json | replace('$', '$$') }}
       - {{ (compose_bind_ip ~ ':443:443') | to_json | replace('$', '$$') }}
@@ -63,6 +71,23 @@ services:
     volumes:
       - pihole_data:/etc/pihole
 
+{% if compose_caddy_static_ip_enabled | bool %}
+networks:
+  # Preserve the existing shared network, including Immich's external attachment.
+  default: {}
+  caddy_egress:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-hl-caddy
+    labels:
+      se.mathijs.homelab.caddy-static-ip: 'true'
+    ipam:
+      config:
+        - subnet: {{ (compose_caddy_network_prefix ~ '.0/28') | to_json }}
+          gateway: {{ (compose_caddy_network_prefix ~ '.1') | to_json }}
+          ip_range: {{ (compose_caddy_network_prefix ~ '.8/29') | to_json }}
+
+{% endif %}
 volumes:
   pihole_data:
   caddy_data:

@@ -103,6 +103,16 @@ reruns. Configuration changes take effect on an explicit start/restart; Ansible
 does not start or restart the game during provisioning. The server stays stopped
 after host reboots too.
 
+### Proxy address changes after reboot
+
+If Home Tools reports “Client is outside the allowed LAN networks” after a reboot,
+compare Caddy's actual source with the dashboard's trusted proxy. The
+[stable Caddy address setup](compose.md#stable-caddy-source-address-for-home-tools)
+prevents address churn without trusting the whole Docker subnet. Provisioning is
+`site.yml --tags valheim`; **`valheim.yml` is the operation playbook and defaults
+to status**, so it does not refresh dashboard configuration. Initial fixed-address
+migration needs both `caddy-ip,valheim` tags as documented above.
+
 ### Existing-data migration
 
 Stop the game and take a backup before changing ownership or storage paths.

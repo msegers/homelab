@@ -2,6 +2,9 @@
 # Non-secret host settings are committed normally. Keep the actual password in
 # vault.yml, created with ansible-vault (see ansible/README.md).
 compose_bind_ip: 192.168.68.111
+# Reserved Caddy-only egress bridge; the existing shared network is unchanged.
+compose_caddy_static_ip_enabled: true
+compose_caddy_network_prefix: 172.30.255
 compose_pihole_password: "{{ vault_compose_pihole_password }}"
 compose_pihole_domain: pihole.mathijs.se
 compose_pihole_allowed_networks: [192.168.68.0/24]
@@ -53,8 +56,10 @@ valheim_dashboard_enabled: true
 valheim_dashboard_bind_ip: "{{ compose_bind_ip }}"
 valheim_dashboard_allowed_networks: [192.168.68.0/24]
 valheim_dashboard_allowed_hosts: [lab.mathijs.se]
-# Ansible discovers and trusts only this Caddy container's private IPv4 peers.
+# In fixed mode, trust only the verified reserved source, never its dynamic app IP.
 valheim_dashboard_proxy_container: homelab-proxy-1
+valheim_dashboard_proxy_network_name: '{{ "homelab_caddy_egress" if compose_caddy_static_ip_enabled | bool else "" }}'
+valheim_dashboard_proxy_expected_ipv4: '{{ compose_caddy_network_prefix ~ ".2" if compose_caddy_static_ip_enabled | bool else "" }}'
 
 # Docker binds published ports to the Ethernet LAN address. This host uses ifupdown.
 docker_ifupdown_wait_online_interface: eno1

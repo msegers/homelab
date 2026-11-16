@@ -41,6 +41,10 @@
   loop_control:
     label: 'homelab-{{ item.item }}-1'
 
+- name: Verify the reserved Caddy source and actual route to the dashboard
+  ansible.builtin.import_tasks: verify_caddy_ip.yml
+  when: compose_caddy_static_ip_enabled | default(false) | bool
+
 # HostConfig.PortBindings describes intent, not whether Docker published ports.
 # Check the actual mappings, including TCP/UDP and the exact LAN-only bind IP.
 - name: Require the intended LAN-only published ports

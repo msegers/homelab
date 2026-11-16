@@ -1,0 +1,96 @@
+---
+- name: Require Docker active before fixed-address inspection without socket activation
+  ansible.builtin.command:
+    argv: [systemctl, is-active, docker.service]
+  changed_when: false
+  check_mode: false
+
+- name: Validate the private canonical Caddy network prefix
+  ansible.builtin.assert:
+    that:
+      - compose_caddy_network_prefix is match('^(10\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3})$')
+      - compose_caddy_network_prefix.split('.') | map('int') | max <= 255
+      - compose_caddy_network_prefix.split('.') | map('int') | map('string') | join('.') == compose_caddy_network_prefix
+    fail_msg: Choose a canonical RFC1918 three-octet prefix for a free /28; existing networks will not be migrated.
+
+- name: Read Compose and daemon API versions without changing Docker
+  ansible.builtin.command:
+    argv: '{{ item }}'
+  loop:
+    - [docker, --context, default, compose, version, --short]
+    - [docker, --context, default, version, --format, '{{ "{{.Server.APIVersion}}" }}']
+  register: compose_caddy_versions
+  changed_when: false
+  check_mode: false
+
+- name: Require gateway-priority support rather than silently using a dynamic source IP
+  ansible.builtin.assert:
+    that:
+      - compose_caddy_versions.results[0].stdout | trim | regex_replace('^v', '') is version('2.33.1', '>=')
+      - compose_caddy_versions.results[1].stdout | trim is version('1.48', '>=')
+    fail_msg: Fixed Caddy egress requires Compose >= 2.33.1 and Docker API >= 1.48 (Engine 28+); upgrade separately before applying.
+
+- name: Find the reserved Caddy bridge without inspecting container secrets
+  community.docker.docker_network_info:
+    name: homelab_caddy_egress
+  register: compose_caddy_network
+  check_mode: false
+
+- name: Refuse to adopt or reconfigure a conflicting reserved Caddy network
+  ansible.builtin.assert:
+    that:
+      - network.Driver == 'bridge'
+      - not network.Internal
+      - not network.EnableIPv6
+      - (network.Labels | default({}, true)).get('com.docker.compose.project', '') == 'homelab'
+      - (network.Labels | default({}, true)).get('com.docker.compose.network', '') == 'caddy_egress'
+      - (network.Labels | default({}, true)).get('se.mathijs.homelab.caddy-static-ip', '') == 'true'
+      - (network.Options | default({}, true)).get('com.docker.network.bridge.name', '') == 'br-hl-caddy'
+      - network.IPAM.Driver == 'default'
+      - network.IPAM.Config == expected_ipam
+    fail_msg: The reserved network already exists with foreign ownership or different IPAM/options. Stop for an explicit migration plan; do not delete shared networks.
+  vars:
+    network: '{{ compose_caddy_network.network }}'
+    expected_ipam:
+      - Subnet: '{{ compose_caddy_network_prefix }}.0/28'
+        Gateway: '{{ compose_caddy_network_prefix }}.1'
+        IPRange: '{{ compose_caddy_network_prefix }}.8/29'
+  when: compose_caddy_network.exists
+
+- name: Reject unexpected endpoints on the Caddy-only bridge
+  ansible.builtin.assert:
+    that:
+      - item.value.Name == 'homelab-proxy-1'
+      - item.value.IPv4Address == compose_caddy_network_prefix ~ '.2/28'
+    fail_msg: Only Caddy may occupy the reserved bridge; no endpoint will be disconnected automatically.
+  loop: '{{ (compose_caddy_network.network | default({})).get("Containers", {}) | default({}, true) | dict2items }}'
+  when: compose_caddy_network.exists
+
+- name: Refuse a DNS-only first migration of the proxy network
+  ansible.builtin.assert:
+    that: compose_caddy_network.exists
+    fail_msg: Apply the Caddy migration with --tags caddy-ip,valheim before using --tags pihole-dns; DNS-only runs must not introduce this network.
+  when: "'pihole-dns' in ansible_run_tags and 'caddy-ip' not in ansible_run_tags"
+
+- name: Read all IPv4 routing tables before allocating the reserved bridge
+  ansible.builtin.command:
+    argv: [/usr/sbin/ip, -json, '-4', route, show, table, all]
+  register: compose_caddy_host_routes
+  changed_when: false
+  check_mode: false
+
+- name: Refuse overlap with existing host LAN VPN or Docker routes
+  ansible.builtin.assert:
+    that:
+      - route_end | int < reserved_start | int or route_start | int > reserved_start | int + 15 or (compose_caddy_network.exists and item.dev | default('') == 'br-hl-caddy')
+    fail_msg: 'The proposed {{ compose_caddy_network_prefix }}.0/28 overlaps {{ item.dst }} on {{ item.dev | default("an unknown device") }}. Choose a free prefix; no routes or networks were changed.'
+  vars:
+    reserved: '{{ compose_caddy_network_prefix.split(".") | map("int") | list }}'
+    reserved_start: '{{ reserved[0] * 16777216 + reserved[1] * 65536 + reserved[2] * 256 }}'
+    route: '{{ item.dst if "/" in item.dst else item.dst ~ "/32" }}'
+    octets: '{{ route.split("/")[0].split(".") | map("int") | list }}'
+    block_size: '{{ 2 ** (32 - (route.split("/")[1] | int)) }}'
+    route_start: '{{ ((octets[0] * 16777216 + octets[1] * 65536 + octets[2] * 256 + octets[3]) // (block_size | int)) * (block_size | int) }}'
+    route_end: '{{ route_start | int + block_size | int - 1 }}'
+  loop: '{{ compose_caddy_host_routes.stdout | from_json }}'
+  when: item.dst | default('default') not in ['default', '0.0.0.0/0']

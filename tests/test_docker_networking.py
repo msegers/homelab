@@ -17,7 +17,7 @@ COMPOSE = ROOT / "ansible/roles/compose"
 
 
 class DockerNetworkingTests(unittest.TestCase):
-    def run_tasks(self, tasks, variables):
+    def run_tasks(self, tasks, variables, tags=None):
         with tempfile.TemporaryDirectory(
             prefix="docker-network-test-",
             dir="/tmp/opencode" if Path("/tmp/opencode").is_dir() else None,
@@ -27,8 +27,11 @@ class DockerNetworkingTests(unittest.TestCase):
                 "hosts": "localhost", "gather_facts": False,
                 "vars": variables, "tasks": tasks,
             }]))
+            command = ["ansible-playbook", "-i", "localhost,", "-c", "local", str(play)]
+            if tags is not None:
+                command += ["--tags", tags]
             return subprocess.run(
-                ["ansible-playbook", "-i", "localhost,", "-c", "local", str(play)],
+                command,
                 cwd=directory, capture_output=True, text=True,
             )
 
@@ -68,7 +71,7 @@ class DockerNetworkingTests(unittest.TestCase):
         self.assertEqual(inspect["loop"], ["proxy", "website", "pihole"])
         self.assertFalse(inspect["changed_when"])
         self.assertIn(".NetworkSettings.Ports", argv[5])
-        self.assertEqual(len(tasks), 4)
+        self.assertEqual(len(tasks), 5)
         deploy = yaml.safe_load((COMPOSE / "tasks/main.yml").read_text())
         self.assertEqual(deploy[-1]["ansible.builtin.import_tasks"], "verify_networks.yml")
 

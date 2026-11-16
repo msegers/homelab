@@ -5,7 +5,7 @@
       - compose_bind_ip is defined
       - compose_bind_ip in ansible_all_ipv4_addresses
     fail_msg: Set compose_bind_ip to a LAN IPv4 address assigned to the target; ansible_host is only for SSH.
-  tags: [pihole-dns]
+  tags: [pihole-dns, caddy-ip]
 
 - name: Require Pi-hole password
   ansible.builtin.assert:
@@ -15,7 +15,12 @@
       - compose_pihole_password | length > 0
     fail_msg: Set compose_pihole_password in host_vars (Ansible Vault recommended).
   no_log: true
-  tags: [pihole-dns]
+  tags: [pihole-dns, caddy-ip]
+
+- name: Preflight the reserved Caddy network before rendering or reconciling containers
+  ansible.builtin.import_tasks: caddy_network.yml
+  when: compose_caddy_static_ip_enabled | bool
+  tags: [caddy-ip, pihole-dns]
 
 - name: Require explicit Pi-hole admin client networks
   ansible.builtin.assert:
@@ -130,7 +135,22 @@
     group: root
     mode: "0600"
   no_log: true
-  tags: [pihole-dns]
+  tags: [pihole-dns, caddy-ip]
+
+- name: Apply only the Caddy network change when explicitly requested
+  community.docker.docker_compose_v2:
+    project_src: '{{ compose_project_dir }}'
+    project_name: homelab
+    services: [proxy]
+    dependencies: false
+    state: present
+    pull: never
+    build: never
+    wait: true
+    wait_timeout: 180
+  when: not ansible_check_mode
+  no_log: true
+  tags: [never, caddy-ip]
 
 - name: Apply only Pi-hole DNS changes when explicitly requested
   community.docker.docker_compose_v2:
@@ -162,3 +182,4 @@
 - name: Verify homelab network attachments independently of health checks
   ansible.builtin.import_tasks: verify_networks.yml
   when: not ansible_check_mode
+  tags: [caddy-ip]
