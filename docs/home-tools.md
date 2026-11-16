@@ -139,10 +139,16 @@ hosts file (this overrides addresses only, not HTTPS/ECH records):
 After an authorized deployment, use **`https://lab.mathijs.se/valheim`**.
 Caddy terminates browser-trusted HTTPS and proxies to the private HTTP backend
 on port 8787. The port-free route checks the real LAN peer before serving any
-page, token or API. Only the explicitly discovered Caddy `/32` peers may supply
+page, token or API. Only the explicitly verified Caddy `/32` peer(s) may supply
 the HTTPS forwarding scheme; other clients cannot spoof it. Host, Origin and
-action-token checks remain enabled. Re-run the Valheim playbook after recreating
-the proxy container if its IP changes; stale peers fail closed.
+action-token checks remain enabled. The homelab's
+[reserved Caddy egress address](compose.md#stable-caddy-source-address-for-home-tools)
+keeps that peer at `172.30.255.2/32` across reboots/recreations, without changing
+the existing app network. Initial migration needs `site.yml --tags caddy-ip,valheim`.
+Installations without fixed egress must refresh changed peers with
+`site.yml --tags valheim`; **`valheim.yml` only runs game operations**, not dashboard
+provisioning. Missing/wrong reserved endpoints fail closed rather than broadening
+the allowlist.
 For central resolution later, deploy the record and configure router DHCP or
 individual clients to use Pi-hole. Local records are
 not usable by clients that choose another resolver (including browser DoH).

@@ -1,0 +1,28 @@
+---
+- name: Require Caddy's reserved endpoint and preferred default gateway
+  ansible.builtin.assert:
+    that:
+      - endpoint.get('NetworkID', '') | length > 0
+      - endpoint.get('EndpointID', '') | length > 0
+      - endpoint.get('IPAddress', '') == compose_caddy_network_prefix ~ '.2'
+      - endpoint.get('IPPrefixLen', 0) | int == 28
+      - endpoint.get('Gateway', '') == compose_caddy_network_prefix ~ '.1'
+      - endpoint.get('GwPriority', 0) | int == 100
+      - (endpoint.get('IPAMConfig', {}) | default({}, true)).get('IPv4Address', '') == compose_caddy_network_prefix ~ '.2'
+      - (inspection.networks.get('homelab_default', {}) | default({}, true)).get('GwPriority', 0) | int == 0
+    fail_msg: Caddy is missing its fixed endpoint or gateway priority. No repair or trust broadening was attempted.
+  vars:
+    inspection: '{{ (compose_network_inspections.results | selectattr("item", "equalto", "proxy") | first).stdout | from_json }}'
+    endpoint: '{{ (inspection.networks | default({}, true)).get("homelab_caddy_egress", {}) }}'
+
+- name: Inspect Caddy's actual source route to the LAN dashboard without sending traffic
+  ansible.builtin.command:
+    argv: [docker, --context, default, exec, homelab-proxy-1, ip, '-4', route, get, '{{ compose_bind_ip }}']
+  register: compose_caddy_route
+  changed_when: false
+  check_mode: false
+
+- name: Refuse a dynamic proxy source even when the containers are healthy
+  ansible.builtin.assert:
+    that: compose_caddy_route.stdout is search('(?:^|\s)src ' ~ ((compose_caddy_network_prefix ~ '.2') | regex_escape) ~ '(?:\s|$)')
+    fail_msg: Caddy does not use its reserved source for the dashboard route. Inspect routes before accepting this deployment; no broad Docker allowlist was added.

@@ -116,6 +116,24 @@ class ProvisionTests(unittest.TestCase):
                 self.variables["proxy_fixture"] = fixture
                 self.run_role("dashboard_proxy", expect_success=False)
 
+    def test_fixed_proxy_ignores_dynamic_app_address_changes_and_requires_reserved_endpoint(self):
+        self.variables.update(valheim_dashboard_proxy_container="homelab-proxy-1",
+                              valheim_dashboard_proxy_network_name="homelab_caddy_egress",
+                              valheim_dashboard_proxy_expected_ipv4="172.30.255.2")
+        for dynamic in ["172.18.0.3", "172.18.0.4"]:
+            self.variables["proxy_fixture"] = {"exists": True, "container": {"State": {"Running": True},
+                "NetworkSettings": {"Networks": {"homelab_default": {"IPAddress": dynamic},
+                    "homelab_caddy_egress": {"IPAddress": "172.30.255.2"}}}}}
+            self.run_role("dashboard_proxy")
+            unit = (self.root / "valheim-dashboard.service").read_text()
+            self.assertIn("--trusted-proxy 172.30.255.2/32", unit)
+            self.assertNotIn("--trusted-proxy 172.18", unit)
+        networks = self.variables["proxy_fixture"]["container"]["NetworkSettings"]["Networks"]
+        networks["homelab_caddy_egress"]["IPAddress"] = "172.30.255.8"
+        self.run_role("dashboard_proxy", expect_success=False)
+        del networks["homelab_caddy_egress"]
+        self.run_role("dashboard_proxy", expect_success=False)
+
     def test_sudo_check_requires_explicit_denial_regardless_of_exit_status(self):
         denial = "User valheim-game is not allowed to run sudo on homelab.\n"
         cases = [(0, denial, "", True), (1, denial, "", True), (1, "", denial, True),
